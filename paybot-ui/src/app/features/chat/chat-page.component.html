@@ -1,0 +1,90 @@
+<div class="chat-page">
+  <!-- Header -->
+  <header class="chat-header">
+    <div class="header-content">
+      <div class="logo">
+        <svg class="logo-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor" opacity="0.2"/>
+          <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22Z" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        <h1 class="logo-text">PayBot</h1>
+      </div>
+      @if (messageStore.hasMessages()) {
+        <button
+          class="new-chat-btn"
+          (click)="onNewConversation()"
+          title="Start new conversation"
+        >
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>New Chat</span>
+        </button>
+      }
+    </div>
+  </header>
+
+  <!-- Chat Area -->
+  <div class="chat-area">
+    @if (messageStore.hasMessages()) {
+      <!-- Message List -->
+      <app-message-list [messages]="messageStore.messages()" />
+
+      <!-- Typing Indicator -->
+      @if (messageStore.isLoading()) {
+        <app-typing-indicator />
+      }
+
+      <!-- Error Message -->
+      @if (messageStore.error()) {
+        <div class="error-message">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M12 8V12M12 16H12.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <span>{{ messageStore.error() }}</span>
+          <button class="dismiss-btn" (click)="messageStore.clearError()">Dismiss</button>
+        </div>
+      }
+    } @else {
+      <!-- Empty State -->
+      <div class="empty-state">
+        <div class="welcome-content">
+          <div class="welcome-icon">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M21 11.5C21.0034 12.8199 20.6951 14.1219 20.1 15.3C19.3944 16.7118 18.3098 17.8992 16.9674 18.7293C15.6251 19.5594 14.0782 19.9994 12.5 20C11.1801 20.0034 9.87812 19.6951 8.7 19.1L3 21L4.9 15.3C4.30493 14.1219 3.99656 12.8199 4 11.5C4.00061 9.92176 4.44061 8.37485 5.27072 7.03255C6.10083 5.69025 7.28825 4.60557 8.7 3.9C9.87812 3.30493 11.1801 2.99656 12.5 3H13C15.0843 3.11499 17.053 3.99476 18.5291 5.47086C20.0052 6.94696 20.885 8.91565 21 11V11.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h2 class="welcome-title">Welcome to PayBot</h2>
+          <p class="welcome-description">
+            Your intelligent payment assistant. Ask me anything about payments,
+            transactions, account management, and more.
+          </p>
+        </div>
+
+        <div class="suggestions">
+          <p class="suggestions-label">Try asking:</p>
+          <div class="suggestion-list">
+            @for (suggestion of suggestions; track suggestion) {
+              <button
+                class="suggestion-btn"
+                (click)="onSuggestionClick(suggestion)"
+              >
+                {{ suggestion }}
+              </button>
+            }
+          </div>
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- Input Area -->
+  <div class="input-area">
+    <app-chat-input
+      [disabled]="messageStore.isLoading()"
+      (sendMessage)="onSendMessage($event)"
+    />
+  </div>
+</div>

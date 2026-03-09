@@ -1,0 +1,34 @@
+<div
+  [class.message-container]="true"
+  [class.message-user]="isUser()"
+  [class.message-assistant]="isAssistant()"
+  [attr.aria-label]="(isUser() ? 'You said' : 'PayBot said') + ': ' + message().content"
+>
+  @if (isAssistant()) {
+    <div class="avatar assistant-avatar" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="currentColor" opacity="0.2"/>
+        <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+      </svg>
+    </div>
+  }
+
+  <div class="message-content">
+    <div class="message-bubble">
+      <p class="message-text">{{ message().content }}</p>
+    </div>
+    <span class="message-timestamp">
+      {{ message().timestamp | date:'shortTime' }}
+    </span>
+  </div>
+
+  @if (isUser()) {
+    <div class="avatar user-avatar" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="2"/>
+        <path d="M4 20C4 17 8 14 12 14C16 14 20 17 20 20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </div>
+  }
+</div>

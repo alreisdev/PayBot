@@ -1,0 +1,37 @@
+<div class="chat-input-container">
+  <div class="input-wrapper">
+    <textarea
+      #textareaInput
+      class="message-input"
+      [value]="message()"
+      [disabled]="disabled()"
+      (input)="onInput($event)"
+      (keydown)="onKeydown($event)"
+      placeholder="Type your message..."
+      rows="1"
+      aria-label="Message input"
+    ></textarea>
+
+    <button
+      class="send-button"
+      [disabled]="!canSend() || disabled()"
+      (click)="send()"
+      aria-label="Send message"
+      type="button"
+    >
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path
+          d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+    </button>
+  </div>
+
+  <p class="input-hint">
+    Press <kbd>Enter</kbd> to send, <kbd>Shift + Enter</kbd> for new line
+  </p>
+</div>

@@ -1,0 +1,11 @@
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  overflow-y: auto;
+  padding: var(--spacing-sm) 0;
+  scroll-behavior: smooth;
+
+  // Ensure smooth scrolling on iOS
+  -webkit-overflow-scrolling: touch;
+}

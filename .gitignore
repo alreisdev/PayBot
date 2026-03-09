@@ -1,0 +1,47 @@
+# Java / Maven
+JavaPayBotService/target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+*.iml
+
+# IDE
+.idea/
+*.ipr
+*.iws
+.vscode/
+*.swp
+*.swo
+
+# Maven
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+
+# Node / Angular
+paybot-ui/node_modules/
+paybot-ui/dist/
+paybot-ui/.angular/
+npm-debug.log
+yarn-error.log
+
+# Environment
+.env
+*.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Claude Code
+.claude/
+
+# H2 Database files
+*.db
+*.mv.db
+*.trace.db

@@ -1,0 +1,12 @@
+<div
+  #scrollContainer
+  class="message-list"
+  (scroll)="onScroll()"
+  role="log"
+  aria-label="Chat messages"
+  aria-live="polite"
+>
+  @for (message of messages(); track trackByMessageId($index, message)) {
+    <app-message-item [message]="message" />
+  }
+</div>
