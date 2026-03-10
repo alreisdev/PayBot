@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: ./JavaPayBotService
+      dockerfile: Dockerfile
+    container_name: paybot-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
+      - SPRING_PROFILES_ACTIVE=docker
+    volumes:
+      - ./credentials:/app/credentials:ro
+    networks:
+      - paybot-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./paybot-ui
+      dockerfile: Dockerfile
+    container_name: paybot-frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - paybot-network
+
+networks:
+  paybot-network:
+    driver: bridge

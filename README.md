@@ -19,11 +19,48 @@ A conversational chatbot for managing and paying bills using natural language, p
 
 ## Prerequisites
 
+- **Docker & Docker Compose** (recommended) OR
 - **Java 17+** (Amazon Corretto, OpenJDK, etc.)
 - **Node.js 18+** and npm (for Angular frontend)
 - **Gemini API Key** - Get one free from [Google AI Studio](https://aistudio.google.com/apikey)
 
-## Quick Start
+## Quick Start with Docker (Recommended)
+
+```bash
+# Set your Gemini API key
+set GEMINI_API_KEY=your-api-key-here   # Windows CMD
+$env:GEMINI_API_KEY="your-api-key"     # PowerShell
+export GEMINI_API_KEY="your-api-key"   # Linux/Mac
+
+# Build and run
+docker-compose up --build
+```
+
+Access the app at **http://localhost:4200**
+
+The Docker setup includes:
+- **Backend**: Spring Boot on port 8080
+- **Frontend**: Angular served via Nginx on port 4200
+- Health checks and automatic service dependencies
+- Nginx proxy routing `/api/*` requests to the backend
+
+### Docker Commands
+
+```bash
+# Start in background
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+
+# Rebuild after code changes
+docker-compose up --build
+```
+
+## Quick Start (Manual)
 
 ### 1. Set up Gemini API Key
 
@@ -74,7 +111,10 @@ Try these prompts:
 
 ```
 Paybot/
+├── docker-compose.yml           # Container orchestration
 ├── JavaPayBotService/           # Spring Boot Backend
+│   ├── Dockerfile               # Multi-stage build
+│   ├── .dockerignore
 │   ├── src/main/java/com/agile/paybot/
 │   │   ├── PayBotApplication.java
 │   │   ├── controller/
@@ -93,6 +133,9 @@ Paybot/
 │       └── application.properties
 │
 └── paybot-ui/                   # Angular Frontend
+    ├── Dockerfile               # Multi-stage build
+    ├── .dockerignore
+    ├── nginx.conf               # Nginx config for SPA routing
     └── src/app/
         ├── core/services/       # ChatService, MessageStore
         └── features/chat/       # Chat components
@@ -133,6 +176,8 @@ Content-Type: application/json
 | Database | H2 (in-memory) |
 | Frontend | Angular 18 |
 | Styling | SCSS |
+| Containerization | Docker, Docker Compose |
+| Web Server | Nginx (production) |
 
 ## Key Learnings
 
