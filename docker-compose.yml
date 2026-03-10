@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paybot-postgres
+    environment:
+      - POSTGRES_DB=paybotdb
+      - POSTGRES_USER=paybot
+      - POSTGRES_PASSWORD=paybot123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - paybot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paybot -d paybotdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./JavaPayBotService
@@ -6,9 +23,15 @@ services:
     container_name: paybot-backend
     ports:
       - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
       - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/paybotdb
+      - SPRING_DATASOURCE_USERNAME=paybot
+      - SPRING_DATASOURCE_PASSWORD=paybot123
     volumes:
       - ./credentials:/app/credentials:ro
     networks:
@@ -36,3 +59,6 @@ services:
 networks:
   paybot-network:
     driver: bridge
+
+volumes:
+  postgres_data:

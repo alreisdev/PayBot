@@ -12,7 +12,7 @@ A conversational chatbot for managing and paying bills using natural language, p
 └─────────────────┘     └────────┬─────────┘     └─────────────┘
                                  │
                         ┌────────▼─────────┐
-                        │   H2 Database    │
+                        │   PostgreSQL     │
                         │  (Bills/Payments)│
                         └──────────────────┘
 ```
@@ -41,8 +41,10 @@ Access the app at **http://localhost:4200**
 The Docker setup includes:
 - **Backend**: Spring Boot on port 8080
 - **Frontend**: Angular served via Nginx on port 4200
+- **Database**: PostgreSQL 16 with persistent volume
 - Health checks and automatic service dependencies
 - Nginx proxy routing `/api/*` requests to the backend
+- Flyway database migrations run automatically on startup
 
 ### Docker Commands
 
@@ -58,7 +60,15 @@ docker-compose down
 
 # Rebuild after code changes
 docker-compose up --build
+
+# Access PostgreSQL database
+docker exec -it paybot-postgres psql -U paybot -d paybotdb
+
+# View tables
+docker exec -it paybot-postgres psql -U paybot -d paybotdb -c "\dt"
 ```
+
+> **Data Persistence**: The PostgreSQL data is stored in a Docker volume (`postgres_data`). Your data persists across container restarts. Use `docker-compose down -v` to delete the volume and reset the database.
 
 ## Quick Start (Manual)
 
@@ -85,7 +95,8 @@ cd JavaPayBotService
 The backend will start at `http://localhost:8080`
 
 - Health check: `GET http://localhost:8080/api/health`
-- H2 Console: `http://localhost:8080/h2-console` (JDBC URL: `jdbc:h2:mem:paybotdb`)
+
+> **Note**: Manual setup requires a local PostgreSQL instance running on port 5432 with database `paybotdb`. For easier setup, use Docker instead.
 
 ### 3. Start the Frontend
 
@@ -130,7 +141,10 @@ Paybot/
 │   │       ├── entity/                # JPA entities
 │   │       └── dto/                   # Data transfer objects
 │   └── src/main/resources/
-│       └── application.properties
+│       ├── application.properties
+│       └── db/migration/            # Flyway SQL migrations
+│           ├── V1__Initial_Schema.sql
+│           └── V2__Seed_Data.sql
 │
 └── paybot-ui/                   # Angular Frontend
     ├── Dockerfile               # Multi-stage build
@@ -172,8 +186,8 @@ Content-Type: application/json
 | Component | Technology |
 |-----------|------------|
 | Backend | Spring Boot 4.0.3, Java 17 |
-| LLM Integration | Spring AI 1.1.1 + Google GenAI |
-| Database | H2 (in-memory) |
+| LLM Integration | Spring AI 2.0.0-M2 + Google GenAI |
+| Database | PostgreSQL 16 (Flyway migrations) |
 | Frontend | Angular 18 |
 | Styling | SCSS |
 | Containerization | Docker, Docker Compose |
