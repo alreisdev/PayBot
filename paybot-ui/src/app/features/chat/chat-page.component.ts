@@ -1,4 +1,5 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy, signal } from '@angular/core';
+import { Subscription } from 'rxjs';
 import { ChatService } from '../../core/services/chat.service';
 import { MessageStoreService } from '../../core/services/message-store.service';
 import { MessageListComponent } from './message-list/message-list.component';
@@ -7,6 +8,7 @@ import { TypingIndicatorComponent } from './typing-indicator/typing-indicator.co
 
 /**
  * Main chat page component that orchestrates the chat experience
+ * Uses WebSocket for real-time message reception
  */
 @Component({
   selector: 'app-chat-page',
@@ -15,9 +17,15 @@ import { TypingIndicatorComponent } from './typing-indicator/typing-indicator.co
   templateUrl: './chat-page.component.html',
   styleUrl: './chat-page.component.scss'
 })
-export class ChatPageComponent {
+export class ChatPageComponent implements OnInit, OnDestroy {
   private readonly chatService = inject(ChatService);
   protected readonly messageStore = inject(MessageStoreService);
+
+  private webSocketSubscription: Subscription | null = null;
+  private connectionSubscription: Subscription | null = null;
+
+  /** Whether the WebSocket is connected */
+  protected readonly isConnected = signal<boolean>(false);
 
   /** Suggested prompts for empty state */
   protected readonly suggestions = [
@@ -26,6 +34,47 @@ export class ChatPageComponent {
     'What are the payment options available?',
     'Show me my recent transactions'
   ];
+
+  ngOnInit(): void {
+    // Connect to WebSocket on component initialization
+    this.chatService.connectWebSocket();
+
+    // Subscribe to WebSocket messages
+    this.webSocketSubscription = this.chatService.getWebSocketMessages().subscribe({
+      next: (response) => {
+        // Add assistant message from WebSocket
+        this.messageStore.addAssistantMessage(response.message.content);
+        // Stop loading indicator
+        this.messageStore.setLoading(false);
+      },
+      error: (error) => {
+        console.error('WebSocket message error:', error);
+        this.messageStore.setError('Failed to receive response. Please try again.');
+        this.messageStore.setLoading(false);
+      }
+    });
+
+    // Subscribe to connection status changes
+    this.connectionSubscription = this.chatService.getConnectionStatus().subscribe({
+      next: (connected) => {
+        this.isConnected.set(connected);
+        if (!connected && this.messageStore.isLoading()) {
+          // If disconnected while waiting for response, show error
+          this.messageStore.setError('Connection lost. Please try again.');
+          this.messageStore.setLoading(false);
+        }
+      }
+    });
+  }
+
+  ngOnDestroy(): void {
+    // Clean up subscriptions
+    this.webSocketSubscription?.unsubscribe();
+    this.connectionSubscription?.unsubscribe();
+
+    // Disconnect WebSocket
+    this.chatService.disconnectWebSocket();
+  }
 
   /**
    * Handles sending a message to the chat API
@@ -42,14 +91,16 @@ export class ChatPageComponent {
     // Remove the last message (current user message) from history
     const previousHistory = history.slice(0, -1);
 
-    // Set loading state
+    // Set loading state (typing indicator)
     this.messageStore.setLoading(true);
 
-    // Send message to API
+    // Send message to API (returns 202 Accepted)
+    // The actual response will come via WebSocket
     this.chatService.sendMessage(content, previousHistory).subscribe({
-      next: (response) => {
-        this.messageStore.addAssistantMessage(response.message.content);
-        this.messageStore.setLoading(false);
+      next: () => {
+        // Request accepted - waiting for WebSocket response
+        // Loading state remains true until WebSocket message arrives
+        console.log('Message sent, waiting for WebSocket response...');
       },
       error: (error: Error) => {
         this.messageStore.setError(error.message);

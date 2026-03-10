@@ -8,27 +8,94 @@ A natural language chatbot for managing and paying bills, powered by Google Gemi
 Angular Frontend  -->  Spring Boot Backend  -->  Gemini LLM
      (Chat UI)           (REST API)           (Function Calling)
                               |
-                         H2 Database
+                         PostgreSQL
                         (Bills/Payments)
 ```
 
-## Quick Start
+## Quick Start (Docker - Recommended)
 
-### Backend (Spring Boot)
+```bash
+docker-compose up --build
+```
+
+Access:
+- Frontend: http://localhost:4200
+- Backend API: http://localhost:8080
+- Health check: http://localhost:8080/api/health
+
+### Manual Start (without Docker)
+
+**Backend:**
 ```bash
 cd JavaPayBotService
 set GEMINI_API_KEY=your-api-key-here
 mvn spring-boot:run
 ```
-Backend runs on: http://localhost:8080
 
-### Frontend (Angular)
+**Frontend:**
 ```bash
 cd paybot-ui
 npm install
 npm start
 ```
-Frontend runs on: http://localhost:4200
+
+---
+
+## Running the Application (Claude Workflow)
+
+When asked to "run the application", "start the app", or similar:
+
+### 1. Pre-flight Checks (parallel)
+- `docker ps` - verify Docker is running
+- Check ports 8080, 4200, 5432 are available
+- Verify `credentials/` directory exists with service account JSON
+
+### 2. Start Application
+```bash
+docker-compose up --build -d
+```
+
+### 3. Monitor Startup (3 min timeout)
+```bash
+docker-compose logs -f --tail=100
+```
+
+Watch for:
+- "Started PayBotApplication" (success)
+- Error patterns (see below)
+
+### 4. Health Verification
+```bash
+curl http://localhost:8080/api/health
+docker-compose ps
+```
+
+### 5. Report Status
+Generate a report with:
+- Overall status (success/failure)
+- Services status (postgres, backend, frontend)
+- Any errors found with proposed fixes
+
+### 6. Error Handling
+If errors found, **propose fixes but do NOT auto-apply**. Wait for user approval.
+
+### Common Error Patterns
+
+| Error Pattern | Detection | Proposed Fix |
+|--------------|-----------|--------------|
+| `Connection refused: postgres` | Log contains "Connection refused" + "5432" | Increase healthcheck retries |
+| `Table not found` | "relation X does not exist" | Check Flyway migrations |
+| `Bean creation error` | "BeanCreationException" | Check @Component annotations |
+| `Port already in use` | "Address already in use" | Kill process or change port |
+| `API key not set` | "API key" error | Set GEMINI_API_KEY env var |
+| `Build failed` | Maven/npm errors | Parse and suggest fix |
+
+### Fix Workflow (after user approval)
+1. Stop containers: `docker-compose down`
+2. Apply approved fixes
+3. Rebuild: `docker-compose up --build -d`
+4. Re-verify health
+5. Report results
 
 ## Environment Variables
 
@@ -38,10 +105,10 @@ Frontend runs on: http://localhost:4200
 
 ## Key Technologies
 
-- **Backend**: Spring Boot 4.0.3, Java 17, Spring AI 1.1.1
+- **Backend**: Spring Boot 4.0.3, Java 17, Spring AI 2.0.0-M2
 - **Frontend**: Angular 18, Standalone Components, Signals
 - **LLM**: Google Gemini 2.0 Flash via Spring AI
-- **Database**: H2 in-memory (auto-seeded with sample bills)
+- **Database**: PostgreSQL 16 with Flyway migrations
 
 ## Project Structure
 
@@ -109,7 +176,7 @@ Tools are registered with ChatClient via `.tools(payBotTools)`.
 |--------|----------|-------------|
 | POST | `/api/chat` | Send chat message |
 | GET | `/api/health` | Health check |
-| GET | `/h2-console` | H2 database console |
+| GET | `/api/bills` | Debug: list all bills |
 
 ### Chat Request Format
 ```json
@@ -124,15 +191,16 @@ Tools are registered with ChatClient via `.tools(payBotTools)`.
 
 ## Database
 
-H2 in-memory database with auto-created tables:
+PostgreSQL 16 with Flyway-managed schema:
 - `bills` - User bills
 - `payments` - Payment records
 - `scheduled_payments` - Scheduled payment jobs
+- `flyway_schema_history` - Migration tracking
 
-Access H2 Console: http://localhost:8080/h2-console
-- JDBC URL: `jdbc:h2:mem:paybotdb`
-- Username: `sa`
-- Password: (empty)
+Access PostgreSQL:
+```bash
+docker exec -it paybot-postgres psql -U paybot -d paybotdb
+```
 
 ## Testing
 

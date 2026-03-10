@@ -16,6 +16,23 @@ services:
       timeout: 5s
       retries: 5
 
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: paybot-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=paybot
+      - RABBITMQ_DEFAULT_PASS=paybot123
+    networks:
+      - paybot-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./JavaPayBotService
@@ -26,12 +43,18 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
       - SPRING_PROFILES_ACTIVE=docker
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/paybotdb
       - SPRING_DATASOURCE_USERNAME=paybot
       - SPRING_DATASOURCE_PASSWORD=paybot123
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=paybot
+      - SPRING_RABBITMQ_PASSWORD=paybot123
     volumes:
       - ./credentials:/app/credentials:ro
     networks:
