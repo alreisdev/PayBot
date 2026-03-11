@@ -83,20 +83,16 @@ export class ChatPageComponent implements OnInit, OnDestroy {
   onSendMessage(content: string): void {
     if (!content.trim()) return;
 
-    // Add user message to store
+    // Add user message to store (for UI display only)
     this.messageStore.addUserMessage(content);
-
-    // Get conversation history for context
-    const history = this.messageStore.getConversationHistory();
-    // Remove the last message (current user message) from history
-    const previousHistory = history.slice(0, -1);
 
     // Set loading state (typing indicator)
     this.messageStore.setLoading(true);
 
     // Send message to API (returns 202 Accepted)
+    // History is managed server-side via Redis
     // The actual response will come via WebSocket
-    this.chatService.sendMessage(content, previousHistory).subscribe({
+    this.chatService.sendMessage(content).subscribe({
       next: () => {
         // Request accepted - waiting for WebSocket response
         // Loading state remains true until WebSocket message arrives
@@ -119,8 +115,10 @@ export class ChatPageComponent implements OnInit, OnDestroy {
 
   /**
    * Clears all messages and starts a new conversation
+   * Also generates a new session ID for server-side history
    */
   onNewConversation(): void {
     this.messageStore.clearMessages();
+    this.chatService.startNewConversation();
   }
 }

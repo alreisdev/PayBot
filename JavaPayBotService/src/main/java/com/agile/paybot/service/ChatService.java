@@ -1,17 +1,23 @@
 package com.agile.paybot.service;
 
+import com.agile.paybot.config.RequestContext;
 import com.agile.paybot.domain.dto.ChatRequest;
 import com.agile.paybot.domain.dto.ChatResponse;
 import com.agile.paybot.domain.dto.MessageDTO;
 import com.agile.paybot.function.PayBotTools;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,8 +26,13 @@ import java.util.List;
 @Slf4j
 public class ChatService {
 
+    private static final String CHAT_HISTORY_KEY_PREFIX = "chat:history:";
+    private static final Duration CHAT_HISTORY_TTL = Duration.ofHours(24);
+
     private final ChatClient.Builder chatClientBuilder;
     private final PayBotTools payBotTools;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ObjectMapper objectMapper;
 
     private static final String SYSTEM_PROMPT = """
             You are PayBot, a friendly and helpful assistant for managing and paying bills.
@@ -67,16 +78,19 @@ public class ChatService {
             """;
 
     public ChatResponse processMessage(ChatRequest request) {
-        log.debug("Processing chat message: {}", request.message());
+        String sessionId = request.sessionId();
+        log.debug("Processing chat message for session {}: {}", sessionId, request.message());
+
+        // Fetch conversation history from Redis
+        List<MessageDTO> history = getConversationHistory(sessionId);
 
         ChatClient chatClient = chatClientBuilder
                 .defaultSystem(SYSTEM_PROMPT)
                 .build();
 
-        // Build conversation history
+        // Build conversation history for AI
         List<Message> messages = new ArrayList<>();
-
-        for (MessageDTO msg : request.conversationHistory()) {
+        for (MessageDTO msg : history) {
             if ("user".equals(msg.role())) {
                 messages.add(new UserMessage(msg.content()));
             } else if ("assistant".equals(msg.role())) {
@@ -84,33 +98,84 @@ public class ChatService {
             }
         }
 
+        // Set RequestContext so PayBotTools can access the requestId during tool execution
+        RequestContext.setRequestId(request.requestId());
+
         // Create the chat request with history and tools
         String response;
-        if (messages.isEmpty()) {
-            response = chatClient.prompt()
-                    .user(request.message())
-                    .tools(payBotTools)
-                    .call()
-                    .content();
-        } else {
-            // Add current message
-            messages.add(new UserMessage(request.message()));
+        try {
+            if (messages.isEmpty()) {
+                response = chatClient.prompt()
+                        .user(request.message())
+                        .tools(payBotTools)
+                        .call()
+                        .content();
+            } else {
+                // Add current message
+                messages.add(new UserMessage(request.message()));
 
-            response = chatClient.prompt()
-                    .messages(messages)
-                    .tools(payBotTools)
-                    .call()
-                    .content();
+                response = chatClient.prompt()
+                        .messages(messages)
+                        .tools(payBotTools)
+                        .call()
+                        .content();
+            }
+        } finally {
+            RequestContext.clear();
         }
 
         log.debug("Received response from Gemini: {}", response);
 
+        // Store the new messages in Redis
+        MessageDTO userMessage = new MessageDTO("user", request.message());
+        MessageDTO assistantMessage = new MessageDTO("assistant", response);
+        appendToConversationHistory(sessionId, userMessage, assistantMessage);
+
         return new ChatResponse(
-                new MessageDTO("assistant", response),
+                assistantMessage,
                 new ChatResponse.ChatMetadata(
-                        "gemini-1.5-pro",
-                        null, null, null
+                        "gemini-2.0-flash",
+                        sessionId, request.requestId(), null
                 )
         );
+    }
+
+    private List<MessageDTO> getConversationHistory(String sessionId) {
+        String key = CHAT_HISTORY_KEY_PREFIX + sessionId;
+        String historyJson = stringRedisTemplate.opsForValue().get(key);
+
+        if (historyJson == null || historyJson.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        try {
+            return objectMapper.readValue(historyJson, new TypeReference<List<MessageDTO>>() {});
+        } catch (JsonProcessingException e) {
+            log.error("Failed to parse conversation history for session {}: {}", sessionId, e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
+    private void appendToConversationHistory(String sessionId, MessageDTO... newMessages) {
+        String key = CHAT_HISTORY_KEY_PREFIX + sessionId;
+
+        List<MessageDTO> history = getConversationHistory(sessionId);
+        for (MessageDTO msg : newMessages) {
+            history.add(msg);
+        }
+
+        try {
+            String historyJson = objectMapper.writeValueAsString(history);
+            stringRedisTemplate.opsForValue().set(key, historyJson, CHAT_HISTORY_TTL);
+            log.debug("Updated conversation history for session {}, total messages: {}", sessionId, history.size());
+        } catch (JsonProcessingException e) {
+            log.error("Failed to save conversation history for session {}: {}", sessionId, e.getMessage());
+        }
+    }
+
+    public void clearConversationHistory(String sessionId) {
+        String key = CHAT_HISTORY_KEY_PREFIX + sessionId;
+        stringRedisTemplate.delete(key);
+        log.info("Cleared conversation history for session {}", sessionId);
     }
 }

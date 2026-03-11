@@ -2,13 +2,14 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Observable, catchError, throwError, of } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { ChatRequest, ConversationMessage } from '../models/chat-request.model';
+import { ChatRequest } from '../models/chat-request.model';
 import { ChatResponse } from '../models/chat-response.model';
 import { WebSocketService } from './websocket.service';
 
 /**
  * Service for communicating with the PayBot chat API
  * Uses HTTP POST for sending messages and WebSocket for receiving responses
+ * Manages sessionId for server-side history and requestId for idempotency
  */
 @Injectable({
   providedIn: 'root'
@@ -17,6 +18,15 @@ export class ChatService {
   private readonly http = inject(HttpClient);
   private readonly webSocketService = inject(WebSocketService);
   private readonly apiUrl = `${environment.apiUrl}/chat`;
+
+  private sessionId: string = this.generateSessionId();
+
+  /**
+   * Gets the current session ID
+   */
+  getSessionId(): string {
+    return this.sessionId;
+  }
 
   /**
    * Gets the observable stream of WebSocket messages
@@ -35,10 +45,10 @@ export class ChatService {
   }
 
   /**
-   * Connects to the WebSocket server
+   * Connects to the WebSocket server with session-specific topic
    */
   connectWebSocket(): void {
-    this.webSocketService.connect();
+    this.webSocketService.connect(this.sessionId);
   }
 
   /**
@@ -60,16 +70,13 @@ export class ChatService {
    * Sends a message to the chat API
    * The API returns 202 Accepted and the actual response comes via WebSocket
    * @param message The user's message
-   * @param conversationHistory Previous messages for context
    * @returns Observable that completes when the request is accepted
    */
-  sendMessage(
-    message: string,
-    conversationHistory: ConversationMessage[] = []
-  ): Observable<void> {
+  sendMessage(message: string): Observable<void> {
     const request: ChatRequest = {
       message,
-      conversationHistory
+      requestId: this.generateRequestId(),
+      sessionId: this.sessionId
     };
 
     return this.http
@@ -80,6 +87,32 @@ export class ChatService {
         // The actual response will come via WebSocket
         catchError(() => of(undefined))
       ) as Observable<void>;
+  }
+
+  /**
+   * Starts a new conversation by generating a new session ID
+   */
+  startNewConversation(): void {
+    this.sessionId = this.generateSessionId();
+    // Reconnect WebSocket with new session topic
+    if (this.webSocketService.isConnected()) {
+      this.webSocketService.disconnect();
+      this.webSocketService.connect(this.sessionId);
+    }
+  }
+
+  /**
+   * Generates a unique session ID
+   */
+  private generateSessionId(): string {
+    return `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+  }
+
+  /**
+   * Generates a unique request ID for idempotency
+   */
+  private generateRequestId(): string {
+    return `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
   }
 
   /**

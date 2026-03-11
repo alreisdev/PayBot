@@ -34,6 +34,9 @@ public class Payment {
     @Column(nullable = false)
     private String paymentMethod;
 
+    @Column(name = "request_id")
+    private String requestId;
+
     @PrePersist
     protected void onCreate() {
         if (paymentDate == null) {

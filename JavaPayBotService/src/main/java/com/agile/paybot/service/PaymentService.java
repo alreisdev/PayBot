@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.concurrent.ThreadLocalRandom;
 
 @Service
@@ -27,6 +28,10 @@ public class PaymentService {
     private final BillService billService;
 
     public PaymentResultDTO processPayment(Long billId, BigDecimal amount) {
+        return processPayment(billId, amount, null);
+    }
+
+    public PaymentResultDTO processPayment(Long billId, BigDecimal amount, String requestId) {
         // Validate bill exists and is payable
         BillDTO bill = billService.getBillById(billId)
                 .orElseThrow(() -> new BillNotFoundException(billId));
@@ -46,6 +51,7 @@ public class PaymentService {
         payment.setPaymentDate(LocalDateTime.now());
         payment.setConfirmationNumber(confirmationNumber);
         payment.setPaymentMethod("SIMULATED");
+        payment.setRequestId(requestId);
         paymentRepository.save(payment);
 
         // Mark bill as paid
@@ -57,6 +63,10 @@ public class PaymentService {
                 String.format("Payment successful! Your %s bill of $%.2f has been paid.",
                         bill.billerName(), amount)
         );
+    }
+
+    public Optional<Payment> findPaymentByRequestId(String requestId) {
+        return paymentRepository.findByRequestId(requestId);
     }
 
     private String generateConfirmationNumber() {

@@ -1,5 +1,6 @@
 package com.agile.paybot.function;
 
+import com.agile.paybot.config.RequestContext;
 import com.agile.paybot.domain.dto.BillDTO;
 import com.agile.paybot.domain.dto.PaymentResultDTO;
 import com.agile.paybot.domain.dto.ScheduledPaymentDTO;
@@ -93,7 +94,8 @@ public class PayBotTools {
         log.debug("processPayment called for billId={}, amount={}", billId, amount);
 
         try {
-            PaymentResultDTO result = paymentService.processPayment(billId, amount);
+            String requestId = RequestContext.getRequestId();
+            PaymentResultDTO result = paymentService.processPayment(billId, amount, requestId);
 
             if (result.success()) {
                 return String.format(

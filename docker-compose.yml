@@ -33,6 +33,22 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: paybot-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - paybot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    command: redis-server --appendonly yes
+
   backend:
     build:
       context: ./JavaPayBotService
@@ -45,6 +61,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
       - SPRING_PROFILES_ACTIVE=docker
@@ -55,6 +73,8 @@ services:
       - SPRING_RABBITMQ_PORT=5672
       - SPRING_RABBITMQ_USERNAME=paybot
       - SPRING_RABBITMQ_PASSWORD=paybot123
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
     volumes:
       - ./credentials:/app/credentials:ro
     networks:
@@ -85,3 +105,4 @@ networks:
 
 volumes:
   postgres_data:
+  redis_data:

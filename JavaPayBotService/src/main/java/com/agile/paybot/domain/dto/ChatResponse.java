@@ -6,8 +6,8 @@ public record ChatResponse(
 ) {
     public record ChatMetadata(
             String model,
-            Long promptTokens,
-            Long completionTokens,
-            Long totalTokens
+            String sessionId,
+            String requestId,
+            Long processingTimeMs
     ) {}
 }

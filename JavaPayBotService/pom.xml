@@ -93,6 +93,12 @@
 			<artifactId>spring-boot-starter-websocket</artifactId>
 		</dependency>
 
+		<!-- Redis for caching and session management -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-redis</artifactId>
+		</dependency>
+
 		<!-- Lombok (reduces boilerplate) -->
 		<dependency>
 			<groupId>org.projectlombok</groupId>

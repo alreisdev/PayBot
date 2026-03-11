@@ -12,6 +12,10 @@ export interface ConversationMessage {
 export interface ChatRequest {
   /** The current user message */
   message: string;
-  /** Previous conversation history for context */
-  conversationHistory: ConversationMessage[];
+  /** Unique request ID for idempotency */
+  requestId: string;
+  /** Session ID for server-side history management */
+  sessionId: string;
+  /** @deprecated No longer used - history is managed server-side */
+  conversationHistory?: ConversationMessage[];
 }

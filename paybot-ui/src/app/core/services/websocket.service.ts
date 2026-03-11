@@ -23,6 +23,7 @@ export class WebSocketService implements OnDestroy {
   private readonly maxReconnectAttempts = 5;
   private readonly reconnectDelay = 3000;
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private currentSessionId: string | null = null;
 
   /** Observable stream of incoming chat messages */
   public readonly messages$: Observable<ChatResponse> = this.messageSubject.asObservable();
@@ -49,15 +50,22 @@ export class WebSocketService implements OnDestroy {
 
   /**
    * Establishes WebSocket connection to the backend
+   * @param sessionId The session ID for subscribing to session-specific messages
    */
-  connect(): void {
-    if (this.client?.connected) {
-      console.log('WebSocket already connected');
+  connect(sessionId: string): void {
+    if (this.client?.connected && this.currentSessionId === sessionId) {
+      console.log('WebSocket already connected to session:', sessionId);
       return;
     }
 
+    // If connected to different session, disconnect first
+    if (this.client?.connected && this.currentSessionId !== sessionId) {
+      this.disconnect();
+    }
+
+    this.currentSessionId = sessionId;
     const wsUrl = this.getWebSocketUrl();
-    console.log('Connecting to WebSocket at:', wsUrl);
+    console.log('Connecting to WebSocket at:', wsUrl, 'for session:', sessionId);
 
     this.client = new Client({
       // Use SockJS for fallback transport
@@ -116,11 +124,16 @@ export class WebSocketService implements OnDestroy {
   }
 
   /**
-   * Subscribes to the messages topic
+   * Subscribes to the session-specific messages topic
    */
   private subscribeToMessages(): void {
     if (!this.client?.connected) {
       console.warn('Cannot subscribe: WebSocket not connected');
+      return;
+    }
+
+    if (!this.currentSessionId) {
+      console.warn('Cannot subscribe: No session ID');
       return;
     }
 
@@ -129,7 +142,8 @@ export class WebSocketService implements OnDestroy {
       this.subscription.unsubscribe();
     }
 
-    this.subscription = this.client.subscribe('/topic/messages', (message: IMessage) => {
+    const topic = `/topic/messages/${this.currentSessionId}`;
+    this.subscription = this.client.subscribe(topic, (message: IMessage) => {
       this.ngZone.run(() => {
         try {
           const chatResponse: ChatResponse = JSON.parse(message.body);
@@ -141,7 +155,7 @@ export class WebSocketService implements OnDestroy {
       });
     });
 
-    console.log('Subscribed to /topic/messages');
+    console.log('Subscribed to', topic);
   }
 
   /**
@@ -161,7 +175,9 @@ export class WebSocketService implements OnDestroy {
     console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
 
     this.reconnectTimeout = setTimeout(() => {
-      this.connect();
+      if (this.currentSessionId) {
+        this.connect(this.currentSessionId);
+      }
     }, this.reconnectDelay);
   }
 

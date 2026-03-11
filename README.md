@@ -12,7 +12,7 @@ A conversational chatbot for managing and paying bills using natural language, p
 └────────┬────────┘                           │
          │                           ┌────────▼─────────┐
          │  WebSocket                │    RabbitMQ      │
-         │  /topic/messages          │  (Message Queue) │
+         │  /topic/messages/{session}│  (Message Queue) │
          │                           └────────┬─────────┘
          │                                    │
          │                           ┌────────▼─────────┐
@@ -20,22 +20,22 @@ A conversational chatbot for managing and paying bills using natural language, p
          │                           │  (Async Worker)  │
                                      └────────┬─────────┘
                                               │
-                                     ┌────────▼─────────┐
-                                     │   Gemini LLM     │
-                                     │  (Function Calling)│
-                                     └────────┬─────────┘
-                                              │
-                                     ┌────────▼─────────┐
-                                     │   PostgreSQL     │
-                                     │  (Bills/Payments)│
-                                     └──────────────────┘
+                               ┌──────────────┼──────────────┐
+                               │              │              │
+                      ┌────────▼───────┐ ┌────▼─────┐ ┌──────▼──────┐
+                      │   Gemini LLM   │ │  Redis   │ │ PostgreSQL  │
+                      │(Function Calls)│ │(Sessions)│ │(Bills/Pay)  │
+                      └────────────────┘ └──────────┘ └─────────────┘
 ```
 
 **Async Flow:**
-1. User sends message via REST (`POST /api/chat`)
-2. Backend queues request in RabbitMQ and returns `202 Accepted`
-3. `ChatTaskListener` processes the message with Gemini LLM
-4. Response sent to frontend via WebSocket (`/topic/messages`)
+1. User sends message via REST (`POST /api/chat`) with `sessionId` and `requestId`
+2. Backend checks Redis for duplicate `requestId` (idempotency)
+3. Request queued in RabbitMQ, returns `202 Accepted`
+4. `ChatTaskListener` fetches conversation history from Redis
+5. Gemini LLM processes message with function calling
+6. Response + history saved to Redis (24h TTL)
+7. Response sent to frontend via WebSocket (`/topic/messages/{sessionId}`)
 
 ## Prerequisites
 
@@ -63,6 +63,7 @@ The Docker setup includes:
 - **Frontend**: Angular served via Nginx on port 4200
 - **Database**: PostgreSQL 16 with persistent volume
 - **Message Broker**: RabbitMQ with management UI on port 15672
+- **Cache/Sessions**: Redis 7 on port 6379 (idempotency + chat history)
 - Health checks and automatic service dependencies
 - Nginx proxy routing `/api/*` and `/ws-paybot` (WebSocket) to the backend
 - Flyway database migrations run automatically on startup
@@ -90,9 +91,18 @@ docker exec -it paybot-postgres psql -U paybot -d paybotdb -c "\dt"
 
 # Access RabbitMQ Management UI
 # Open http://localhost:15672 (login: paybot / paybot123)
+
+# Access Redis CLI
+docker exec -it paybot-redis redis-cli
+
+# View chat history keys
+docker exec -it paybot-redis redis-cli KEYS "chat:history:*"
+
+# View idempotency keys
+docker exec -it paybot-redis redis-cli KEYS "chat:request:*"
 ```
 
-> **Data Persistence**: The PostgreSQL data is stored in a Docker volume (`postgres_data`). Your data persists across container restarts. Use `docker-compose down -v` to delete the volume and reset the database.
+> **Data Persistence**: PostgreSQL and Redis data are stored in Docker volumes (`postgres_data`, `redis_data`). Your data persists across container restarts. Use `docker-compose down -v` to delete volumes and reset all data.
 
 ## Quick Start (Manual)
 
@@ -123,6 +133,7 @@ The backend will start at `http://localhost:8080`
 > **Note**: Manual setup requires:
 > - PostgreSQL running on port 5432 with database `paybotdb`
 > - RabbitMQ running on port 5672
+> - Redis running on port 6379
 >
 > For easier setup, use Docker instead.
 
@@ -159,6 +170,7 @@ Paybot/
 │   │   ├── config/
 │   │   │   ├── ChatQueueConfig.java   # RabbitMQ queue/exchange setup
 │   │   │   ├── WebSocketConfig.java   # STOMP WebSocket config
+│   │   │   ├── RedisConfig.java       # Redis templates + ObjectMapper
 │   │   │   └── CorsConfig.java        # CORS settings
 │   │   ├── controller/
 │   │   │   ├── ChatController.java    # POST /api/chat (queues to RabbitMQ)
@@ -201,9 +213,13 @@ Content-Type: application/json
 
 {
   "message": "Show me my bills",
-  "conversationHistory": []
+  "requestId": "req_1710182400000_abc123def",
+  "sessionId": "session_1710182400000_xyz789"
 }
 ```
+
+- `requestId`: Unique ID for idempotency (duplicate requests are discarded)
+- `sessionId`: Identifies the conversation (history stored server-side in Redis)
 
 ### Response (Immediate)
 ```json
@@ -214,7 +230,7 @@ HTTP 202 Accepted
 ```
 
 ### WebSocket Response (Async)
-Connect to `/ws-paybot` and subscribe to `/topic/messages`:
+Connect to `/ws-paybot` and subscribe to `/topic/messages/{sessionId}`:
 ```json
 {
   "message": {
@@ -222,7 +238,10 @@ Connect to `/ws-paybot` and subscribe to `/topic/messages`:
     "content": "Here are your unpaid bills..."
   },
   "metadata": {
-    "model": "gemini-2.0-flash"
+    "model": "gemini-2.0-flash",
+    "sessionId": "session_1710182400000_xyz789",
+    "requestId": "req_1710182400000_abc123def",
+    "processingTimeMs": 1250
   }
 }
 ```
@@ -240,6 +259,7 @@ GET /api/health
 | LLM Integration | Spring AI 2.0.0-M2 + Google GenAI |
 | Database | PostgreSQL 16 (Flyway migrations) |
 | Message Broker | RabbitMQ 3 (async processing) |
+| Cache/Sessions | Redis 7 (idempotency + chat history) |
 | Real-time | WebSocket with STOMP over SockJS |
 | Frontend | Angular 18 |
 | Styling | SCSS |
@@ -254,9 +274,10 @@ This project demonstrates:
 2. **Spring AI** - Integrating AI into Spring applications
 3. **Async Messaging** - Decoupling request/response with RabbitMQ
 4. **WebSocket Communication** - Real-time responses with STOMP
-5. **Conversational State** - Managing chat history across requests
-6. **Tool/Function Design** - Defining clear tool contracts for LLMs
-7. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + AI
+5. **Conversational State** - Server-side chat history with Redis
+6. **Idempotency** - Preventing duplicate processing with Redis SETNX
+7. **Tool/Function Design** - Defining clear tool contracts for LLMs
+8. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + Redis + AI
 
 ## Troubleshooting
 
