@@ -1,0 +1,28 @@
+# Build output
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Maven wrapper (not needed in Docker)
+.mvn/
+mvnw
+mvnw.cmd
+
+# Documentation
+*.md
+README*
+LICENSE
+
+# Logs
+*.log
+
+# Test files
+src/test/

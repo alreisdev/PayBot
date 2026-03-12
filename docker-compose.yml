@@ -49,22 +49,19 @@ services:
       retries: 5
     command: redis-server --appendonly yes
 
-  backend:
+  paybot-financial-service:
     build:
-      context: ./JavaPayBotService
-      dockerfile: Dockerfile
-    container_name: paybot-backend
+      context: .
+      dockerfile: paybot-financial-service/Dockerfile
+    container_name: paybot-financial-service
     ports:
-      - "8080:8080"
+      - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     environment:
-      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
       - SPRING_PROFILES_ACTIVE=docker
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/paybotdb
       - SPRING_DATASOURCE_USERNAME=paybot
@@ -73,8 +70,39 @@ services:
       - SPRING_RABBITMQ_PORT=5672
       - SPRING_RABBITMQ_USERNAME=paybot
       - SPRING_RABBITMQ_PASSWORD=paybot123
+    networks:
+      - paybot-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/api/internal/bills/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  paybot-ai-service:
+    build:
+      context: .
+      dockerfile: paybot-ai-service/Dockerfile
+    container_name: paybot-ai-service
+    ports:
+      - "8080:8080"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      paybot-financial-service:
+        condition: service_healthy
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_RABBITMQ_HOST=rabbitmq
+      - SPRING_RABBITMQ_PORT=5672
+      - SPRING_RABBITMQ_USERNAME=paybot
+      - SPRING_RABBITMQ_PASSWORD=paybot123
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
+      - FINANCIAL_SERVICE_URL=http://paybot-financial-service:8081
     volumes:
       - ./credentials:/app/credentials:ro
     networks:
@@ -94,7 +122,7 @@ services:
     ports:
       - "4200:80"
     depends_on:
-      backend:
+      paybot-ai-service:
         condition: service_healthy
     networks:
       - paybot-network
