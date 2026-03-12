@@ -36,6 +36,7 @@ A conversational chatbot for managing and paying bills using natural language, p
 5. Gemini LLM processes message with function calling
 6. Response + history saved to Redis (24h TTL)
 7. Response sent to frontend via WebSocket (`/topic/messages/{sessionId}`)
+8. On failure: retry up to 3 times, then route to Dead Letter Queue (`chat.requests.error`)
 
 ## Prerequisites
 
@@ -91,6 +92,9 @@ docker exec -it paybot-postgres psql -U paybot -d paybotdb -c "\dt"
 
 # Access RabbitMQ Management UI
 # Open http://localhost:15672 (login: paybot / paybot123)
+
+# View queue depths (check DLQ for poison pills)
+docker exec -it paybot-rabbitmq rabbitmqctl list_queues name messages
 
 # Access Redis CLI
 docker exec -it paybot-redis redis-cli
@@ -168,7 +172,7 @@ Paybot/
 │   ├── src/main/java/com/agile/paybot/
 │   │   ├── PayBotApplication.java
 │   │   ├── config/
-│   │   │   ├── ChatQueueConfig.java   # RabbitMQ queue/exchange setup
+│   │   │   ├── ChatQueueConfig.java   # RabbitMQ queue/exchange/DLQ setup
 │   │   │   ├── WebSocketConfig.java   # STOMP WebSocket config
 │   │   │   ├── RedisConfig.java       # Redis templates + ObjectMapper
 │   │   │   ├── RequestContext.java    # ThreadLocal for requestId propagation
@@ -352,7 +356,67 @@ ChatTaskListener                 ChatService                    PayBotTools
 | Exact duplicate (already done) | COMPLETED | — | Replay cached response from Redis |
 | Worker crashed after payment | PROCESSING (stale) | Payment exists | Self-heal: build response from DB, set COMPLETED |
 | Worker crashed before payment | PROCESSING (stale) | No payment | Delete stale key, re-acquire lock, re-process |
-| Processing error / exception | — | — | Delete Redis key, NACK + requeue message |
+| Processing error / exception | — | — | Delete Redis key, retry or route to DLQ |
+
+## Dead Letter Queue (Poison Pill Protection)
+
+Messages that fail repeatedly are "poison pills" — they'll loop forever unless stopped. The DLQ pattern catches them after a configurable retry limit.
+
+### How It Works
+
+```
+                  ┌────────────────┐
+   Request ──────▶│  chat.requests │  (main queue)
+                  │  x-dead-letter │──── on reject ────┐
+                  │  -exchange:    │                    │
+                  │  chat.requests │                    │
+                  │  .dlx          │                    │
+                  └───────┬────────┘                    │
+                          │                             │
+                    ┌─────▼──────┐               ┌─────▼──────────┐
+                    │ Listener   │               │ chat.requests  │
+                    │ processes  │               │ .dlx (exchange)│
+                    └─────┬──────┘               └─────┬──────────┘
+                          │                            │
+                   Success? ──No──▶ retryCount < 3?    │
+                     │                  │              │
+                    Yes            Yes: NACK      No: NACK
+                     │            (requeue=true)  (requeue=false)
+                     │                  │              │
+                    ACK            Back to        ┌────▼────────────┐
+                                  main queue      │ chat.requests   │
+                                                  │ .error (queue)  │
+                                                  └─────────────────┘
+```
+
+### RabbitMQ Queues & Exchanges
+
+| Name | Type | Purpose |
+|------|------|---------|
+| `chat.requests` | Queue | Main processing queue with DLX arguments |
+| `chat.exchange` | Direct Exchange | Routes incoming requests to main queue |
+| `chat.requests.error` | Queue | Dead letter queue for poison pill messages |
+| `chat.requests.dlx` | Direct Exchange | Routes rejected messages to error queue |
+
+### Retry Behavior
+
+| Retry Count | Action | User Notification |
+|-------------|--------|-------------------|
+| 0 (first attempt) | Process normally | — |
+| 1-2 | NACK + requeue, retry | — |
+| 3+ (max reached) | NACK without requeue (routes to DLQ) | WebSocket: *"I'm having trouble processing this specific request. Please try rephrasing."* |
+
+The retry count is tracked via the `x-death` header that RabbitMQ automatically attaches to dead-lettered messages. The `getRetryCount()` method in `ChatTaskListener` extracts this count.
+
+### Inspecting the DLQ
+
+```bash
+# Check messages in the error queue via RabbitMQ Management UI
+# Open http://localhost:15672 → Queues → chat.requests.error
+
+# Or via CLI inside the container
+docker exec -it paybot-rabbitmq rabbitmqctl list_queues name messages
+```
 
 ## Key Learnings
 
@@ -367,8 +431,9 @@ This project demonstrates:
 7. **Self-Healing Recovery** - Double-Check pattern using DB as source of truth when Redis state is stale
 8. **ThreadLocal Context Propagation** - Passing request context through LLM function call boundaries
 9. **Manual Message Acknowledgment** - RabbitMQ ACK/NACK for crash-safe message processing
-10. **Tool/Function Design** - Defining clear tool contracts for LLMs
-11. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + Redis + AI
+10. **Dead Letter Queues** - Poison pill protection with DLX routing after retry exhaustion
+11. **Tool/Function Design** - Defining clear tool contracts for LLMs
+12. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + Redis + AI
 
 ## Troubleshooting
 
