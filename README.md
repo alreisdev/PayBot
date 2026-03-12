@@ -171,6 +171,7 @@ Paybot/
 │   │   │   ├── ChatQueueConfig.java   # RabbitMQ queue/exchange setup
 │   │   │   ├── WebSocketConfig.java   # STOMP WebSocket config
 │   │   │   ├── RedisConfig.java       # Redis templates + ObjectMapper
+│   │   │   ├── RequestContext.java    # ThreadLocal for requestId propagation
 │   │   │   └── CorsConfig.java        # CORS settings
 │   │   ├── controller/
 │   │   │   ├── ChatController.java    # POST /api/chat (queues to RabbitMQ)
@@ -190,7 +191,8 @@ Paybot/
 │       ├── application.properties
 │       └── db/migration/            # Flyway SQL migrations
 │           ├── V1__Initial_Schema.sql
-│           └── V2__Seed_Data.sql
+│           ├── V2__Seed_Data.sql
+│           └── V3__Add_Request_Id_To_Payments.sql
 │
 └── paybot-ui/                   # Angular Frontend
     ├── Dockerfile               # Multi-stage build
@@ -266,6 +268,92 @@ GET /api/health
 | Containerization | Docker, Docker Compose |
 | Web Server | Nginx (production) |
 
+## Self-Healing Idempotency (Double-Check Pattern)
+
+The `ChatTaskListener` implements a crash-resilient "Double-Check" pattern that handles the edge case where a worker dies **after** paying a bill but **before** acknowledging the RabbitMQ message or updating Redis.
+
+### The Problem
+
+In a distributed system, a worker can crash at any point during processing. If it crashes after executing a payment but before marking the request as `COMPLETED` in Redis, the message will be redelivered — potentially causing a **double payment**.
+
+### The Solution: Three-State Flow
+
+```
+                    ┌───────────────────┐
+  New Request ────▶ │  SETNX requestId  │
+                    │  "PROCESSING"     │
+                    └────────┬──────────┘
+                             │
+                   ┌─────────▼─────────┐
+                   │  Key acquired?     │
+                   └──┬─────────────┬───┘
+                  YES │             │ NO
+                      │             │
+              ┌───────▼──────┐  ┌───▼───────────────┐
+              │ Process      │  │ Read existing      │
+              │ normally     │  │ value from Redis   │
+              └───────┬──────┘  └───┬───────────┬────┘
+                      │             │           │
+                      │      "COMPLETED"   "PROCESSING"
+                      │             │           │
+                      │    ┌────────▼──┐  ┌─────▼──────────┐
+                      │    │ Replay    │  │ DB Validation  │
+                      │    │ cached    │  │ (PostgreSQL)   │
+                      │    │ response  │  └──┬──────────┬──┘
+                      │    └───────────┘     │          │
+                      │               Payment Found  Not Found
+                      │                      │          │
+                      │             ┌────────▼──┐  ┌───▼──────────┐
+                      │             │ Self-heal │  │ Re-acquire   │
+                      │             │ from DB   │  │ lock and     │
+                      │             │ record    │  │ re-process   │
+                      │             └───────────┘  └──────────────┘
+                      │
+              ┌───────▼──────────────────┐
+              │ On success:              │
+              │ 1. Set Redis → COMPLETED │
+              │ 2. Cache AI response     │
+              │ 3. Send via WebSocket    │
+              │ 4. ACK RabbitMQ message  │
+              └──────────────────────────┘
+```
+
+### Key Components
+
+| Component | File | Role |
+|-----------|------|------|
+| `ChatTaskListener` | `listener/ChatTaskListener.java` | Orchestrates the Double-Check flow with manual RabbitMQ ACK/NACK |
+| `RequestContext` | `config/RequestContext.java` | ThreadLocal that threads `requestId` from listener → ChatService → PayBotTools |
+| `PaymentService` | `service/PaymentService.java` | Stores `requestId` on Payment entity; provides `findPaymentByRequestId()` |
+| `V3 Migration` | `db/migration/V3__Add_Request_Id_To_Payments.sql` | Adds indexed `request_id` column to `payments` table |
+
+### How RequestId Flows Through the Stack
+
+The `requestId` must reach the `PayBotTools.processPayment()` method, but Gemini controls the function call signatures — we can't add `requestId` as a tool parameter. The solution is a `ThreadLocal`:
+
+```
+ChatTaskListener                 ChatService                    PayBotTools
+     │                               │                              │
+     │  processMessage(request) ───▶ │                              │
+     │                               │  RequestContext.set(reqId)   │
+     │                               │  call Gemini ──────────────▶ │
+     │                               │                              │  RequestContext.get()
+     │                               │                              │  paymentService.processPayment(
+     │                               │                              │      billId, amount, requestId)
+     │                               │  RequestContext.clear()      │
+     │  ◀─── response ──────────────│                              │
+```
+
+### Error Recovery Behavior
+
+| Scenario | Redis State | DB State | Action |
+|----------|------------|----------|--------|
+| Normal first request | Key doesn't exist | — | Process normally, set COMPLETED |
+| Exact duplicate (already done) | COMPLETED | — | Replay cached response from Redis |
+| Worker crashed after payment | PROCESSING (stale) | Payment exists | Self-heal: build response from DB, set COMPLETED |
+| Worker crashed before payment | PROCESSING (stale) | No payment | Delete stale key, re-acquire lock, re-process |
+| Processing error / exception | — | — | Delete Redis key, NACK + requeue message |
+
 ## Key Learnings
 
 This project demonstrates:
@@ -276,8 +364,11 @@ This project demonstrates:
 4. **WebSocket Communication** - Real-time responses with STOMP
 5. **Conversational State** - Server-side chat history with Redis
 6. **Idempotency** - Preventing duplicate processing with Redis SETNX
-7. **Tool/Function Design** - Defining clear tool contracts for LLMs
-8. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + Redis + AI
+7. **Self-Healing Recovery** - Double-Check pattern using DB as source of truth when Redis state is stale
+8. **ThreadLocal Context Propagation** - Passing request context through LLM function call boundaries
+9. **Manual Message Acknowledgment** - RabbitMQ ACK/NACK for crash-safe message processing
+10. **Tool/Function Design** - Defining clear tool contracts for LLMs
+11. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + Redis + AI
 
 ## Troubleshooting
 
