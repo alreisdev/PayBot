@@ -31,6 +31,10 @@ public class ChatQueueConfig {
     public static final String PAYMENT_COMMAND_KEY = "payment.command";
     public static final String PAYMENT_RESULT_QUEUE = "financial.payment.result";
     public static final String PAYMENT_RESULT_KEY = "payment.result";
+    public static final String SCHEDULE_COMMAND_QUEUE = "financial.schedule.command";
+    public static final String SCHEDULE_COMMAND_KEY = "schedule.command";
+    public static final String SCHEDULE_RESULT_QUEUE = "financial.schedule.result";
+    public static final String SCHEDULE_RESULT_KEY = "schedule.result";
 
     // ── Chat queue beans ──
 
@@ -104,6 +108,32 @@ public class ChatQueueConfig {
                 .bind(paymentResultQueue)
                 .to(financialExchange)
                 .with(PAYMENT_RESULT_KEY);
+    }
+
+    @Bean
+    Queue scheduleCommandQueue() {
+        return QueueBuilder.durable(SCHEDULE_COMMAND_QUEUE).build();
+    }
+
+    @Bean
+    Queue scheduleResultQueue() {
+        return QueueBuilder.durable(SCHEDULE_RESULT_QUEUE).build();
+    }
+
+    @Bean
+    Binding scheduleCommandBinding(Queue scheduleCommandQueue, DirectExchange financialExchange) {
+        return BindingBuilder
+                .bind(scheduleCommandQueue)
+                .to(financialExchange)
+                .with(SCHEDULE_COMMAND_KEY);
+    }
+
+    @Bean
+    Binding scheduleResultBinding(Queue scheduleResultQueue, DirectExchange financialExchange) {
+        return BindingBuilder
+                .bind(scheduleResultQueue)
+                .to(financialExchange)
+                .with(SCHEDULE_RESULT_KEY);
     }
 
     // ── Shared infrastructure ──

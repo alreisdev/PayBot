@@ -5,6 +5,7 @@ import com.agile.paybot.service.FinancialServiceClient;
 import com.agile.paybot.shared.dto.BillDTO;
 import com.agile.paybot.shared.dto.ScheduledPaymentDTO;
 import com.agile.paybot.shared.event.PaymentCommandEvent;
+import com.agile.paybot.shared.event.SchedulePaymentCommandEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
@@ -179,16 +180,23 @@ public class PayBotTools {
     ) {
         log.debug("schedulePayment called for billId={}, scheduledDate={}", billId, scheduledDate);
 
-        // Schedule payment is still synchronous via REST since it doesn't
-        // involve actual money movement — just creates a record
         try {
-            // For now, delegate to the financial service REST endpoint
-            // (future enhancement: could also be saga-based)
-            return "Scheduling payments via the financial service is being processed. " +
-                   "The payment will be automatically processed on " + scheduledDate + ".";
+            SchedulePaymentCommandEvent command = new SchedulePaymentCommandEvent(
+                    currentRequestId, billId, scheduledDate, currentSessionId);
+
+            rabbitTemplate.convertAndSend(
+                    ChatQueueConfig.FINANCIAL_EXCHANGE,
+                    ChatQueueConfig.SCHEDULE_COMMAND_KEY,
+                    command
+            );
+
+            log.info("Published SchedulePaymentCommandEvent: requestId={}, billId={}, scheduledDate={}",
+                    currentRequestId, billId, scheduledDate);
+
+            return "Your payment is being scheduled. You'll receive confirmation shortly.";
 
         } catch (Exception e) {
-            log.error("Failed to schedule payment: {}", e.getMessage());
+            log.error("Failed to submit schedule payment command: {}", e.getMessage());
             return "Failed to schedule payment: " + e.getMessage();
         }
     }

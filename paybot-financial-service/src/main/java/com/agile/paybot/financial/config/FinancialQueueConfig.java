@@ -26,6 +26,14 @@ public class FinancialQueueConfig {
     public static final String PAYMENT_RESULT_QUEUE = "financial.payment.result";
     public static final String PAYMENT_RESULT_KEY = "payment.result";
 
+    // Schedule command queue (AI service → Financial service)
+    public static final String SCHEDULE_COMMAND_QUEUE = "financial.schedule.command";
+    public static final String SCHEDULE_COMMAND_KEY = "schedule.command";
+
+    // Schedule result queue (Financial service → AI service)
+    public static final String SCHEDULE_RESULT_QUEUE = "financial.schedule.result";
+    public static final String SCHEDULE_RESULT_KEY = "schedule.result";
+
     @Bean
     DirectExchange financialExchange() {
         return new DirectExchange(FINANCIAL_EXCHANGE);
@@ -55,6 +63,32 @@ public class FinancialQueueConfig {
                 .bind(paymentResultQueue)
                 .to(financialExchange)
                 .with(PAYMENT_RESULT_KEY);
+    }
+
+    @Bean
+    Queue scheduleCommandQueue() {
+        return QueueBuilder.durable(SCHEDULE_COMMAND_QUEUE).build();
+    }
+
+    @Bean
+    Queue scheduleResultQueue() {
+        return QueueBuilder.durable(SCHEDULE_RESULT_QUEUE).build();
+    }
+
+    @Bean
+    Binding scheduleCommandBinding(Queue scheduleCommandQueue, DirectExchange financialExchange) {
+        return BindingBuilder
+                .bind(scheduleCommandQueue)
+                .to(financialExchange)
+                .with(SCHEDULE_COMMAND_KEY);
+    }
+
+    @Bean
+    Binding scheduleResultBinding(Queue scheduleResultQueue, DirectExchange financialExchange) {
+        return BindingBuilder
+                .bind(scheduleResultQueue)
+                .to(financialExchange)
+                .with(SCHEDULE_RESULT_KEY);
     }
 
     @Bean
