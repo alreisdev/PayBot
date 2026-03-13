@@ -24,10 +24,11 @@ A natural language chatbot for managing and paying bills, powered by Google Gemi
                                   └──────────────────────────┘
 ```
 
-**Saga Payment Flow:**
-1. Gemini calls `processPayment` tool → AI service publishes `PaymentCommandEvent` to RabbitMQ
-2. Financial service consumes, processes payment (DB-level idempotency), publishes `PaymentResultEvent`
-3. AI service consumes result, pushes confirmation to user via WebSocket
+**Saga Flows (async via RabbitMQ):**
+1. **Payment**: Gemini calls `processPayment` → AI publishes `PaymentCommandEvent` → Financial processes (DB idempotency) → publishes `PaymentResultEvent` → AI pushes confirmation via WebSocket
+2. **Schedule**: Gemini calls `schedulePayment` → AI publishes `SchedulePaymentCommandEvent` → Financial creates scheduled record → publishes `SchedulePaymentResultEvent` → AI pushes confirmation via WebSocket
+
+**Inter-service REST** (via OpenFeign with Resilience4j fallbacks): bill queries, scheduled payment listings, cancellations
 
 ## Quick Start (Docker - Recommended)
 
@@ -119,7 +120,7 @@ If errors found, **propose fixes but do NOT auto-apply**. Wait for user approval
 
 ## Key Technologies
 
-- **AI Service**: Spring Boot 4.0.3, Java 17, Spring AI 2.0.0-M2, RabbitMQ, Redis, WebSocket
+- **AI Service**: Spring Boot 4.0.3, Java 17, Spring AI 2.0.0-M2, Spring Cloud OpenFeign, Resilience4j, RabbitMQ, Redis, WebSocket
 - **Financial Service**: Spring Boot 4.0.3, Java 17, PostgreSQL 16, Flyway, RabbitMQ, springdoc-openapi
 - **Shared Library**: `paybot-shared` JAR (DTOs, enums, saga events)
 - **Frontend**: Angular 18, Standalone Components, Signals
@@ -136,30 +137,35 @@ src/main/java/com/agile/paybot/shared/
 ├── enums/
 │   ├── BillStatus.java, ScheduledPaymentStatus.java
 └── event/
-    ├── PaymentCommandEvent.java   # AI → Financial (saga command)
-    └── PaymentResultEvent.java    # Financial → AI (saga result)
+    ├── PaymentCommandEvent.java          # AI → Financial (payment saga command)
+    ├── PaymentResultEvent.java           # Financial → AI (payment saga result)
+    ├── SchedulePaymentCommandEvent.java  # AI → Financial (schedule saga command)
+    └── SchedulePaymentResultEvent.java   # Financial → AI (schedule saga result)
 ```
 
 ### AI Service (`paybot-ai-service/`)
 ```
 src/main/java/com/agile/paybot/
-├── PayBotApplication.java          # Main entry
+├── PayBotApplication.java              # Main entry (@EnableFeignClients)
+├── client/
+│   ├── FinancialClient.java            # @FeignClient declarative REST interface
+│   └── FinancialClientFallback.java    # Resilience4j fallback (returns empty/null)
 ├── config/
-│   ├── ChatQueueConfig.java        # Chat + saga RabbitMQ queues
-│   ├── CorsConfig.java             # CORS for localhost:4200
-│   ├── RedisConfig.java            # Redis + ObjectMapper
-│   └── WebSocketConfig.java        # STOMP WebSocket
+│   ├── ChatQueueConfig.java            # Chat + payment + schedule saga queues
+│   ├── CorsConfig.java                 # CORS for localhost:4200
+│   ├── RedisConfig.java                # Redis + ObjectMapper
+│   └── WebSocketConfig.java            # STOMP WebSocket
 ├── controller/
-│   ├── ChatController.java         # POST /api/chat, GET /api/health
+│   ├── ChatController.java             # POST /api/chat, GET /api/health
 │   └── GlobalExceptionHandler.java
 ├── function/
-│   └── PayBotTools.java            # @Tool methods (REST + saga commands)
+│   └── PayBotTools.java                # @Tool methods (Feign + saga commands)
 ├── listener/
-│   ├── ChatTaskListener.java       # Chat queue consumer (idempotent)
-│   └── PaymentResultListener.java  # Saga result → WebSocket push
+│   ├── ChatTaskListener.java           # Chat queue consumer (idempotent + DB double-check)
+│   ├── PaymentResultListener.java      # Payment saga result → WebSocket push
+│   └── SchedulePaymentResultListener.java # Schedule saga result → WebSocket push
 └── service/
-    ├── ChatService.java            # Gemini orchestration + Redis history
-    └── FinancialServiceClient.java # REST client to financial service
+    └── ChatService.java                # Gemini orchestration + Redis history
 ```
 
 ### Financial Service (`paybot-financial-service/`)
@@ -178,7 +184,8 @@ src/main/java/com/agile/paybot/financial/
 ├── exception/
 │   ├── BillNotFoundException.java, BillAlreadyPaidException.java
 ├── listener/
-│   └── PaymentCommandListener.java   # Saga participant (DB idempotent)
+│   ├── PaymentCommandListener.java          # Payment saga participant (DB idempotent)
+│   └── SchedulePaymentCommandListener.java  # Schedule saga participant
 ├── repository/
 │   ├── BillRepository.java, PaymentRepository.java, ScheduledPaymentRepository.java
 ├── scheduler/
@@ -206,9 +213,12 @@ PayBot uses the `@Tool` annotation pattern for Gemini function calling:
 ```java
 @Component
 public class PayBotTools {
+    private final FinancialClient financialClient;  // OpenFeign declarative client
+    private final RabbitTemplate rabbitTemplate;     // For saga commands
+
     @Tool(description = "Get user's bills...")
     public String getBills(@ToolParam(description = "...") String billType) {
-        // Calls FinancialServiceClient (REST)
+        // Calls FinancialClient (Feign) — fallback returns empty list if service is down
     }
 
     @Tool(description = "Process payment...")
@@ -219,6 +229,25 @@ public class PayBotTools {
 ```
 
 Tools are registered with ChatClient via `.tools(payBotTools)`.
+
+### OpenFeign Integration
+
+Inter-service REST communication uses Spring Cloud OpenFeign with Resilience4j circuit breaker:
+
+```java
+@FeignClient(name = "financial-service", url = "${financial.service.url}",
+             fallback = FinancialClientFallback.class)
+public interface FinancialClient {
+    @GetMapping("/api/internal/bills")
+    List<BillDTO> getUnpaidBills(@RequestParam("userId") String userId);
+    // ... other methods map directly to financial service endpoints
+}
+```
+
+**Fallback behavior** (when financial service is down):
+- Read operations (bills, payments) → return empty list / null
+- Write operations (cancel) → throw exception with user-friendly message
+- Circuit breaker: opens after 50% failure rate in 10-call window, half-open after 10s
 
 ### Available Tools
 | Tool | Type | Target |
@@ -268,7 +297,9 @@ OpenAPI docs: http://localhost:8081/swagger-ui.html
 | `chat.requests` | `chat.exchange` | `chat.request` | Chat messages → AI processing |
 | `chat.requests.error` | `chat.requests.dlx` | `error` | DLQ for poison pills |
 | `financial.payment.command` | `financial.exchange` | `payment.command` | AI → Financial (pay bill) |
-| `financial.payment.result` | `financial.exchange` | `payment.result` | Financial → AI (confirmation) |
+| `financial.payment.result` | `financial.exchange` | `payment.result` | Financial → AI (payment confirmation) |
+| `financial.schedule.command` | `financial.exchange` | `schedule.command` | AI → Financial (schedule payment) |
+| `financial.schedule.result` | `financial.exchange` | `schedule.result` | Financial → AI (schedule confirmation) |
 
 ## Database
 
@@ -311,7 +342,8 @@ npm test
 - Use entities only within service layer
 - Services should call other services, not repositories directly (except their own)
 - Lombok for boilerplate reduction (@RequiredArgsConstructor, @Slf4j)
-- Inter-service communication: REST for queries, RabbitMQ for commands (saga)
+- Inter-service communication: OpenFeign (declarative REST) for queries, RabbitMQ for commands (saga)
+- Feign clients must have a Resilience4j fallback class for resilience
 
 ### Frontend
 - Standalone components (no NgModules)
@@ -324,7 +356,7 @@ npm test
 ### Adding a New Tool
 1. Add method to `paybot-ai-service/.../PayBotTools.java` with `@Tool` annotation
 2. Update `SYSTEM_PROMPT` in `ChatService.java`
-3. For sync tools: add method to `FinancialServiceClient` + endpoint in financial service
+3. For sync tools: add method to `FinancialClient` Feign interface + fallback + endpoint in financial service
 4. For async tools: create new event in `paybot-shared`, publish/consume via RabbitMQ
 
 ### Adding a New Entity
@@ -334,7 +366,7 @@ npm test
 4. Create service in `paybot-financial-service/.../service/`
 5. Add Flyway migration in `paybot-financial-service/src/main/resources/db/migration/`
 6. Expose REST endpoint in `paybot-financial-service/.../controller/`
-7. Add `FinancialServiceClient` method in AI service if needed
+7. Add method to `FinancialClient` Feign interface + fallback in AI service if needed
 8. Run `mvn clean install` in `paybot-shared` first if DTOs changed
 
 ### Adding a New Saga Flow

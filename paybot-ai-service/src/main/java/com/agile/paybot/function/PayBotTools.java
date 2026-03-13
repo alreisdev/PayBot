@@ -1,7 +1,7 @@
 package com.agile.paybot.function;
 
+import com.agile.paybot.client.FinancialClient;
 import com.agile.paybot.config.ChatQueueConfig;
-import com.agile.paybot.service.FinancialServiceClient;
 import com.agile.paybot.shared.dto.BillDTO;
 import com.agile.paybot.shared.dto.ScheduledPaymentDTO;
 import com.agile.paybot.shared.event.PaymentCommandEvent;
@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class PayBotTools {
 
-    private final FinancialServiceClient financialServiceClient;
+    private final FinancialClient financialClient;
     private final RabbitTemplate rabbitTemplate;
 
     private static final String DEFAULT_USER_ID = "user-1";
@@ -51,11 +51,11 @@ public class PayBotTools {
         List<BillDTO> bills;
 
         if (currentMonthOnly != null && currentMonthOnly) {
-            bills = financialServiceClient.getUnpaidBillsForCurrentMonth(DEFAULT_USER_ID);
+            bills = financialClient.getUnpaidBillsForCurrentMonth(DEFAULT_USER_ID, true);
         } else if (billType != null && !billType.isBlank()) {
-            bills = financialServiceClient.getBillsByType(DEFAULT_USER_ID, billType);
+            bills = financialClient.getBillsByType(DEFAULT_USER_ID, billType);
         } else {
-            bills = financialServiceClient.getUnpaidBills(DEFAULT_USER_ID);
+            bills = financialClient.getUnpaidBills(DEFAULT_USER_ID);
         }
 
         if (bills.isEmpty()) {
@@ -77,21 +77,23 @@ public class PayBotTools {
     ) {
         log.debug("getBillDetails called for billId={}", billId);
 
-        return financialServiceClient.getBillById(billId)
-                .map(b -> String.format(
-                        "Bill Details:\n" +
-                        "- ID: %d\n" +
-                        "- Biller: %s\n" +
-                        "- Type: %s\n" +
-                        "- Amount: $%.2f\n" +
-                        "- Due Date: %s\n" +
-                        "- Billing Period: %s to %s\n" +
-                        "- Status: %s\n" +
-                        "- Account Number: %s",
-                        b.id(), b.billerName(), b.billType(), b.amount(),
-                        b.dueDate(), b.billingPeriodStart(), b.billingPeriodEnd(),
-                        b.status(), b.accountNumber()))
-                .orElse("Bill not found with ID: " + billId);
+        BillDTO b = financialClient.getBillById(billId);
+        if (b == null) {
+            return "Bill not found with ID: " + billId;
+        }
+        return String.format(
+                "Bill Details:\n" +
+                "- ID: %d\n" +
+                "- Biller: %s\n" +
+                "- Type: %s\n" +
+                "- Amount: $%.2f\n" +
+                "- Due Date: %s\n" +
+                "- Billing Period: %s to %s\n" +
+                "- Status: %s\n" +
+                "- Account Number: %s",
+                b.id(), b.billerName(), b.billType(), b.amount(),
+                b.dueDate(), b.billingPeriodStart(), b.billingPeriodEnd(),
+                b.status(), b.accountNumber());
     }
 
     @Tool(description = "View all scheduled payments or filter by status (PENDING, EXECUTED, CANCELLED, FAILED)")
@@ -102,7 +104,7 @@ public class PayBotTools {
         log.debug("getScheduledPayments called with status={}", status);
 
         try {
-            List<ScheduledPaymentDTO> payments = financialServiceClient.getScheduledPayments(DEFAULT_USER_ID, status);
+            List<ScheduledPaymentDTO> payments = financialClient.getScheduledPayments(DEFAULT_USER_ID, status);
 
             if (payments.isEmpty()) {
                 return "No scheduled payments found.";
@@ -130,7 +132,7 @@ public class PayBotTools {
         log.debug("cancelScheduledPayment called for scheduledPaymentId={}", scheduledPaymentId);
 
         try {
-            financialServiceClient.cancelScheduledPayment(scheduledPaymentId);
+            financialClient.cancelScheduledPayment(scheduledPaymentId);
             return String.format("Scheduled payment %d has been cancelled successfully.", scheduledPaymentId);
 
         } catch (Exception e) {

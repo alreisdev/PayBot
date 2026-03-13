@@ -49,6 +49,19 @@ services:
       retries: 5
     command: redis-server --appendonly yes
 
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: paybot-zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - paybot-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9411/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   paybot-financial-service:
     build:
       context: .
@@ -61,6 +74,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      zipkin:
+        condition: service_healthy
     environment:
       - SPRING_PROFILES_ACTIVE=docker
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/paybotdb
@@ -70,6 +85,7 @@ services:
       - SPRING_RABBITMQ_PORT=5672
       - SPRING_RABBITMQ_USERNAME=paybot
       - SPRING_RABBITMQ_PASSWORD=paybot123
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     networks:
       - paybot-network
     healthcheck:
@@ -93,6 +109,8 @@ services:
         condition: service_healthy
       paybot-financial-service:
         condition: service_healthy
+      zipkin:
+        condition: service_healthy
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials/paybot-credentials.json
       - SPRING_PROFILES_ACTIVE=docker
@@ -103,6 +121,7 @@ services:
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
       - FINANCIAL_SERVICE_URL=http://paybot-financial-service:8081
+      - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     volumes:
       - ./credentials:/app/credentials:ro
     networks:

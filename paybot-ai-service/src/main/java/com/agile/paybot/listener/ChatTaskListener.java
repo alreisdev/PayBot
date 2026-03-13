@@ -1,5 +1,6 @@
 package com.agile.paybot.listener;
 
+import com.agile.paybot.client.FinancialClient;
 import com.agile.paybot.config.ChatQueueConfig;
 import com.agile.paybot.service.ChatService;
 import com.agile.paybot.shared.dto.ChatRequest;
@@ -37,6 +38,7 @@ public class ChatTaskListener {
     private static final int MAX_RETRIES = 3;
 
     private final ChatService chatService;
+    private final FinancialClient financialClient;
     private final SimpMessagingTemplate messagingTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
@@ -134,6 +136,19 @@ public class ChatTaskListener {
     private void handleStaleProcessing(ChatRequest request, Channel channel, long deliveryTag,
                                        String idempotencyKey, int retryCount) throws IOException {
         String requestId = request.requestId();
+
+        // Double-check: verify against financial service DB if a payment was already processed
+        try {
+            Boolean alreadyProcessed = financialClient.paymentExistsByRequestId(requestId);
+            if (Boolean.TRUE.equals(alreadyProcessed)) {
+                log.info("Payment already exists in financial DB for requestId={}, marking as completed", requestId);
+                stringRedisTemplate.opsForValue().set(idempotencyKey, STATUS_COMPLETED, IDEMPOTENCY_TTL);
+                channel.basicAck(deliveryTag, false);
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("Could not verify payment status for requestId={}: {}", requestId, e.getMessage());
+        }
 
         // Delete stale key and re-acquire
         stringRedisTemplate.delete(idempotencyKey);

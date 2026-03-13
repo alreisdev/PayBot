@@ -147,6 +147,7 @@ public class ChatQueueConfig {
     RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory, MessageConverter jsonMessageConverter) {
         RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
         rabbitTemplate.setMessageConverter(jsonMessageConverter);
+        rabbitTemplate.setObservationEnabled(true);
         return rabbitTemplate;
     }
 }
