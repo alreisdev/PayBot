@@ -13,9 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 @RequiredArgsConstructor
@@ -73,8 +73,10 @@ public class PaymentService {
         return paymentRepository.findByRequestId(requestId);
     }
 
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
     private String generateConfirmationNumber() {
         return "PAY-" + System.currentTimeMillis() + "-" +
-                ThreadLocalRandom.current().nextInt(1000, 9999);
+                (1000 + SECURE_RANDOM.nextInt(9000));
     }
 }

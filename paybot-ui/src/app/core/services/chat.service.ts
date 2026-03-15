@@ -105,14 +105,14 @@ export class ChatService {
    * Generates a unique session ID
    */
   private generateSessionId(): string {
-    return `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    return `session_${crypto.randomUUID()}`;
   }
 
   /**
    * Generates a unique request ID for idempotency
    */
   private generateRequestId(): string {
-    return `req_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+    return `req_${crypto.randomUUID()}`;
   }
 
   /**
@@ -134,7 +134,7 @@ export class ChatService {
       errorMessage = error.error.message;
     }
 
-    console.error('Chat API Error:', error);
+    console.error('Chat API Error:', error.status);
     return throwError(() => new Error(errorMessage));
   }
 }

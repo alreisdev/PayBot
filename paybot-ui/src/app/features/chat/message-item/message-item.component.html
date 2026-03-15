@@ -2,7 +2,7 @@
   [class.message-container]="true"
   [class.message-user]="isUser()"
   [class.message-assistant]="isAssistant()"
-  [attr.aria-label]="(isUser() ? 'You said' : 'PayBot said') + ': ' + message().content"
+  [attr.aria-label]="isUser() ? 'Your message' : 'PayBot response'"
 >
   @if (isAssistant()) {
     <div class="avatar assistant-avatar" aria-hidden="true">

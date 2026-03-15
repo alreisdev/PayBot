@@ -108,7 +108,7 @@ public class ScheduledPaymentService {
     public void executePendingScheduledPayments() {
         LocalDateTime now = LocalDateTime.now();
         List<ScheduledPayment> duePayments = scheduledPaymentRepository
-                .findByStatusAndScheduledDateBefore(ScheduledPaymentStatus.PENDING, now);
+                .findDueForExecutionWithLock(ScheduledPaymentStatus.PENDING, now);
 
         log.info("Found {} scheduled payments due for execution", duePayments.size());
 

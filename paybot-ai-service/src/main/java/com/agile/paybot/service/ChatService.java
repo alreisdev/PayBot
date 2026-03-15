@@ -27,6 +27,7 @@ public class ChatService {
 
     private static final String CHAT_HISTORY_KEY_PREFIX = "chat:history:";
     private static final Duration CHAT_HISTORY_TTL = Duration.ofHours(24);
+    private static final int MAX_HISTORY_MESSAGES = 50;
 
     private final ChatClient.Builder chatClientBuilder;
     private final PayBotTools payBotTools;
@@ -131,12 +132,17 @@ public class ChatService {
             PayBotTools.clearContext();
         }
 
-        log.debug("Received response from Gemini: {}", response);
+        if (response == null || response.isBlank()) {
+            log.warn("Received null/empty response from Gemini for session {}", sessionId);
+            response = "I'm sorry, I couldn't process your request. Please try again.";
+        }
 
-        // Store the new messages in Redis
+        log.debug("Received response from Gemini for session {}", sessionId);
+
+        // Store the new messages in Redis (reuse already-fetched history to avoid double read)
         MessageDTO userMessage = new MessageDTO("user", request.message());
         MessageDTO assistantMessage = new MessageDTO("assistant", response);
-        appendToConversationHistory(sessionId, userMessage, assistantMessage);
+        appendToConversationHistory(sessionId, history, userMessage, assistantMessage);
 
         return new ChatResponse(
                 assistantMessage,
@@ -163,12 +169,17 @@ public class ChatService {
         }
     }
 
-    private void appendToConversationHistory(String sessionId, MessageDTO... newMessages) {
+    private void appendToConversationHistory(String sessionId, List<MessageDTO> existingHistory, MessageDTO... newMessages) {
         String key = CHAT_HISTORY_KEY_PREFIX + sessionId;
 
-        List<MessageDTO> history = getConversationHistory(sessionId);
+        List<MessageDTO> history = new ArrayList<>(existingHistory);
         for (MessageDTO msg : newMessages) {
             history.add(msg);
+        }
+
+        // Cap history to prevent unbounded Redis growth
+        if (history.size() > MAX_HISTORY_MESSAGES) {
+            history = new ArrayList<>(history.subList(history.size() - MAX_HISTORY_MESSAGES, history.size()));
         }
 
         try {
