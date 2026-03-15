@@ -46,6 +46,9 @@ public class ScheduledPayment {
 
     private String failureReason;
 
+    @Column(name = "request_id")
+    private String requestId;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

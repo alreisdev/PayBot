@@ -1,6 +1,7 @@
 package com.agile.paybot.financial.listener;
 
 import com.agile.paybot.financial.config.FinancialQueueConfig;
+import com.agile.paybot.financial.domain.entity.ScheduledPayment;
 import com.agile.paybot.financial.exception.BillNotFoundException;
 import com.agile.paybot.financial.service.ScheduledPaymentService;
 import com.agile.paybot.shared.dto.ScheduledPaymentDTO;
@@ -17,13 +18,15 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeParseException;
+import java.util.Optional;
+
+import static com.agile.paybot.shared.constants.PayBotConstants.DEFAULT_USER_ID;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class SchedulePaymentCommandListener {
-
-    private static final String DEFAULT_USER_ID = "user-1";
 
     private final ScheduledPaymentService scheduledPaymentService;
     private final RabbitTemplate rabbitTemplate;
@@ -37,10 +40,28 @@ public class SchedulePaymentCommandListener {
                 requestId, command.billId(), command.scheduledDate());
 
         try {
+            // DB-level idempotency check
+            Optional<ScheduledPayment> existing = scheduledPaymentService.findByRequestId(requestId);
+            if (existing.isPresent()) {
+                ScheduledPayment sp = existing.get();
+                log.info("Duplicate schedule command for requestId={}, replaying result", requestId);
+
+                publishResult(new SchedulePaymentResultEvent(
+                        requestId,
+                        command.sessionId(),
+                        true,
+                        sp.getId(),
+                        String.format("Payment was already scheduled. Scheduled payment ID: %d", sp.getId())
+                ));
+
+                channel.basicAck(tag, false);
+                return;
+            }
+
             LocalDateTime dateTime = LocalDateTime.parse(command.scheduledDate() + "T00:00:00");
 
             ScheduledPaymentDTO result = scheduledPaymentService.schedulePayment(
-                    DEFAULT_USER_ID, command.billId(), dateTime);
+                    DEFAULT_USER_ID, command.billId(), dateTime, requestId);
 
             publishResult(new SchedulePaymentResultEvent(
                     requestId,
@@ -57,7 +78,7 @@ public class SchedulePaymentCommandListener {
             log.info("Schedule payment command processed: requestId={}, scheduledPaymentId={}",
                     requestId, result.id());
 
-        } catch (BillNotFoundException | IllegalStateException | IllegalArgumentException e) {
+        } catch (BillNotFoundException | IllegalStateException | IllegalArgumentException | DateTimeParseException e) {
             log.warn("Business error scheduling payment: requestId={}, error={}",
                     requestId, e.getMessage());
 

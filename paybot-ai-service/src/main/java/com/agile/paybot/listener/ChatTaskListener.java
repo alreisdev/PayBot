@@ -2,6 +2,7 @@ package com.agile.paybot.listener;
 
 import com.agile.paybot.client.FinancialClient;
 import com.agile.paybot.config.ChatQueueConfig;
+import static com.agile.paybot.config.RedisKeyConstants.*;
 import com.agile.paybot.service.ChatService;
 import com.agile.paybot.shared.dto.ChatRequest;
 import com.agile.paybot.shared.dto.ChatResponse;
@@ -20,7 +21,6 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -28,10 +28,6 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Slf4j
 public class ChatTaskListener {
-
-    private static final String IDEMPOTENCY_KEY_PREFIX = "chat:request:";
-    private static final String RESPONSE_CACHE_KEY_PREFIX = "chat:response:";
-    private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(60);
 
     private static final String STATUS_PROCESSING = "PROCESSING";
     private static final String STATUS_COMPLETED = "COMPLETED";
@@ -83,8 +79,7 @@ public class ChatTaskListener {
                                    String idempotencyKey, int retryCount) throws IOException {
         String requestId = request.requestId();
 
-        log.info("Processing new chat request: requestId={}, message={}, retryCount={}",
-                requestId, request.message(), retryCount);
+        log.info("Processing new chat request: requestId={}, retryCount={}", requestId, retryCount);
 
         try {
             ChatResponse response = chatService.processMessage(request);
@@ -150,17 +145,11 @@ public class ChatTaskListener {
             log.warn("Could not verify payment status for requestId={}: {}", requestId, e.getMessage());
         }
 
-        // Delete stale key and re-acquire
-        stringRedisTemplate.delete(idempotencyKey);
-        Boolean reacquired = stringRedisTemplate.opsForValue()
-                .setIfAbsent(idempotencyKey, STATUS_PROCESSING, IDEMPOTENCY_TTL);
-
-        if (Boolean.TRUE.equals(reacquired)) {
+        // Atomically overwrite stale key with PROCESSING status (avoids delete+setNX race)
+        stringRedisTemplate.opsForValue().set(idempotencyKey, STATUS_PROCESSING, IDEMPOTENCY_TTL);
+        // Since we just overwrote it, we own the lock now
+        {
             processNewRequest(request, channel, deliveryTag, idempotencyKey, retryCount);
-        } else {
-            // Another worker grabbed it
-            log.info("Another worker acquired the lock for requestId={}, nacking", requestId);
-            channel.basicNack(deliveryTag, false, true);
         }
     }
 

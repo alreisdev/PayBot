@@ -3,15 +3,15 @@ services:
     image: postgres:16-alpine
     container_name: paybot-postgres
     environment:
-      - POSTGRES_DB=paybotdb
-      - POSTGRES_USER=paybot
-      - POSTGRES_PASSWORD=paybot123
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - paybot-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U paybot -d paybotdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -20,11 +20,10 @@ services:
     image: rabbitmq:3-management-alpine
     container_name: paybot-rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:15672:15672"
     environment:
-      - RABBITMQ_DEFAULT_USER=paybot
-      - RABBITMQ_DEFAULT_PASS=paybot123
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
     networks:
       - paybot-network
     healthcheck:
@@ -36,24 +35,22 @@ services:
   redis:
     image: redis:7-alpine
     container_name: paybot-redis
-    ports:
-      - "6379:6379"
     volumes:
       - redis_data:/data
     networks:
       - paybot-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
 
   zipkin:
     image: openzipkin/zipkin
     container_name: paybot-zipkin
     ports:
-      - "9411:9411"
+      - "127.0.0.1:9411:9411"
     networks:
       - paybot-network
     healthcheck:
@@ -67,8 +64,6 @@ services:
       context: .
       dockerfile: paybot-financial-service/Dockerfile
     container_name: paybot-financial-service
-    ports:
-      - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,13 +73,13 @@ services:
         condition: service_healthy
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/paybotdb
-      - SPRING_DATASOURCE_USERNAME=paybot
-      - SPRING_DATASOURCE_PASSWORD=paybot123
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      - SPRING_DATASOURCE_USERNAME=${POSTGRES_USER}
+      - SPRING_DATASOURCE_PASSWORD=${POSTGRES_PASSWORD}
       - SPRING_RABBITMQ_HOST=rabbitmq
       - SPRING_RABBITMQ_PORT=5672
-      - SPRING_RABBITMQ_USERNAME=paybot
-      - SPRING_RABBITMQ_PASSWORD=paybot123
+      - SPRING_RABBITMQ_USERNAME=${RABBITMQ_USER}
+      - SPRING_RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     networks:
       - paybot-network
@@ -116,10 +111,11 @@ services:
       - SPRING_PROFILES_ACTIVE=docker
       - SPRING_RABBITMQ_HOST=rabbitmq
       - SPRING_RABBITMQ_PORT=5672
-      - SPRING_RABBITMQ_USERNAME=paybot
-      - SPRING_RABBITMQ_PASSWORD=paybot123
+      - SPRING_RABBITMQ_USERNAME=${RABBITMQ_USER}
+      - SPRING_RABBITMQ_PASSWORD=${RABBITMQ_PASSWORD}
       - SPRING_DATA_REDIS_HOST=redis
       - SPRING_DATA_REDIS_PORT=6379
+      - SPRING_DATA_REDIS_PASSWORD=${REDIS_PASSWORD}
       - FINANCIAL_SERVICE_URL=http://paybot-financial-service:8081
       - MANAGEMENT_ZIPKIN_TRACING_ENDPOINT=http://zipkin:9411/api/v2/spans
     volumes:

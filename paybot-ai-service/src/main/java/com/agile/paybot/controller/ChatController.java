@@ -22,7 +22,7 @@ public class ChatController {
 
     @PostMapping("/chat")
     public ResponseEntity<Map<String, String>> chat(@Valid @RequestBody ChatRequest request) {
-        log.info("Received chat message: {}", request.message());
+        log.info("Received chat request: requestId={}, sessionId={}", request.requestId(), request.sessionId());
 
         rabbitTemplate.convertAndSend(
                 ChatQueueConfig.CHAT_EXCHANGE,

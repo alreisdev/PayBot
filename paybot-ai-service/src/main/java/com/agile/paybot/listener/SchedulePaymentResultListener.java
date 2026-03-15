@@ -1,6 +1,7 @@
 package com.agile.paybot.listener;
 
 import com.agile.paybot.config.ChatQueueConfig;
+import static com.agile.paybot.config.RedisKeyConstants.*;
 import com.agile.paybot.shared.dto.ChatResponse;
 import com.agile.paybot.shared.dto.MessageDTO;
 import com.agile.paybot.shared.event.SchedulePaymentResultEvent;
@@ -17,16 +18,11 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.time.Duration;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class SchedulePaymentResultListener {
-
-    private static final String IDEMPOTENCY_KEY_PREFIX = "chat:request:";
-    private static final String RESPONSE_CACHE_KEY_PREFIX = "chat:response:";
-    private static final Duration IDEMPOTENCY_TTL = Duration.ofMinutes(60);
 
     private final SimpMessagingTemplate messagingTemplate;
     private final StringRedisTemplate stringRedisTemplate;

@@ -31,7 +31,7 @@ public class ScheduledPaymentService {
     private final PaymentService paymentService;
 
     @Transactional
-    public ScheduledPaymentDTO schedulePayment(String userId, Long billId, LocalDateTime scheduledDate) {
+    public ScheduledPaymentDTO schedulePayment(String userId, Long billId, LocalDateTime scheduledDate, String requestId) {
         BillDTO billDTO = billService.getBillById(billId)
                 .orElseThrow(() -> new BillNotFoundException(billId));
 
@@ -54,6 +54,7 @@ public class ScheduledPaymentService {
         scheduledPayment.setScheduledDate(scheduledDate);
         scheduledPayment.setAmount(billDTO.amount());
         scheduledPayment.setStatus(ScheduledPaymentStatus.PENDING);
+        scheduledPayment.setRequestId(requestId);
 
         ScheduledPayment saved = scheduledPaymentRepository.save(scheduledPayment);
         log.info("Scheduled payment created: id={}, billId={}, scheduledDate={}",
@@ -82,6 +83,10 @@ public class ScheduledPaymentService {
     public Optional<ScheduledPaymentDTO> getScheduledPaymentById(Long id) {
         return scheduledPaymentRepository.findById(id)
                 .map(sp -> toDTO(sp, sp.getBill().getBillerName(), sp.getBill().getBillType()));
+    }
+
+    public Optional<ScheduledPayment> findByRequestId(String requestId) {
+        return scheduledPaymentRepository.findByRequestId(requestId);
     }
 
     @Transactional

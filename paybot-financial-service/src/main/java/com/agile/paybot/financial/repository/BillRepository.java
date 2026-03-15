@@ -2,13 +2,16 @@ package com.agile.paybot.financial.repository;
 
 import com.agile.paybot.financial.domain.entity.Bill;
 import com.agile.paybot.shared.enums.BillStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface BillRepository extends JpaRepository<Bill, Long> {
@@ -18,6 +21,10 @@ public interface BillRepository extends JpaRepository<Bill, Long> {
     List<Bill> findByUserIdAndStatus(String userId, BillStatus status);
 
     List<Bill> findByUserIdAndBillTypeContainingIgnoreCase(String userId, String billType);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM Bill b WHERE b.id = :id")
+    Optional<Bill> findByIdForUpdate(@Param("id") Long id);
 
     @Query("SELECT b FROM Bill b WHERE b.userId = :userId " +
            "AND b.dueDate BETWEEN :startDate AND :endDate")

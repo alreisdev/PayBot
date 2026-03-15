@@ -7,6 +7,7 @@ import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Repository
 public interface ScheduledPaymentRepository extends JpaRepository<ScheduledPayment, Long> {
@@ -21,4 +22,6 @@ public interface ScheduledPaymentRepository extends JpaRepository<ScheduledPayme
     List<ScheduledPayment> findByUserIdOrderByScheduledDateAsc(String userId);
 
     boolean existsByBillIdAndStatus(Long billId, ScheduledPaymentStatus status);
+
+    Optional<ScheduledPayment> findByRequestId(String requestId);
 }

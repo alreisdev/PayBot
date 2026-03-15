@@ -7,7 +7,6 @@ import com.agile.paybot.shared.dto.ScheduledPaymentDTO;
 import com.agile.paybot.shared.event.PaymentCommandEvent;
 import com.agile.paybot.shared.event.SchedulePaymentCommandEvent;
 import lombok.RequiredArgsConstructor;
-import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
@@ -18,6 +17,8 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import static com.agile.paybot.shared.constants.PayBotConstants.DEFAULT_USER_ID;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -26,16 +27,25 @@ public class PayBotTools {
     private final FinancialClient financialClient;
     private final RabbitTemplate rabbitTemplate;
 
-    private static final String DEFAULT_USER_ID = "user-1";
-
     /**
-     * Request context set by ChatService before each Gemini call.
-     * Used to attach requestId and sessionId to saga events.
+     * Per-thread request context set by ChatService before each Gemini call.
+     * Uses ThreadLocal to prevent concurrent requests from corrupting each other's context.
      */
-    @Setter
-    private String currentRequestId;
-    @Setter
-    private String currentSessionId;
+    private static final ThreadLocal<String> currentRequestId = new ThreadLocal<>();
+    private static final ThreadLocal<String> currentSessionId = new ThreadLocal<>();
+
+    public static void setCurrentRequestId(String requestId) {
+        currentRequestId.set(requestId);
+    }
+
+    public static void setCurrentSessionId(String sessionId) {
+        currentSessionId.set(sessionId);
+    }
+
+    public static void clearContext() {
+        currentRequestId.remove();
+        currentSessionId.remove();
+    }
 
     // ── Synchronous tools (REST calls to financial service) ──
 
@@ -154,7 +164,7 @@ public class PayBotTools {
 
         try {
             PaymentCommandEvent command = new PaymentCommandEvent(
-                    currentRequestId, billId, amount, currentSessionId);
+                    currentRequestId.get(), billId, amount, currentSessionId.get());
 
             rabbitTemplate.convertAndSend(
                     ChatQueueConfig.FINANCIAL_EXCHANGE,
@@ -163,7 +173,7 @@ public class PayBotTools {
             );
 
             log.info("Published PaymentCommandEvent: requestId={}, billId={}, amount={}",
-                    currentRequestId, billId, amount);
+                    currentRequestId.get(), billId, amount);
 
             return "Payment is being processed. You'll receive confirmation shortly.";
 
@@ -184,7 +194,7 @@ public class PayBotTools {
 
         try {
             SchedulePaymentCommandEvent command = new SchedulePaymentCommandEvent(
-                    currentRequestId, billId, scheduledDate, currentSessionId);
+                    currentRequestId.get(), billId, scheduledDate, currentSessionId.get());
 
             rabbitTemplate.convertAndSend(
                     ChatQueueConfig.FINANCIAL_EXCHANGE,
@@ -193,7 +203,7 @@ public class PayBotTools {
             );
 
             log.info("Published SchedulePaymentCommandEvent: requestId={}, billId={}, scheduledDate={}",
-                    currentRequestId, billId, scheduledDate);
+                    currentRequestId.get(), billId, scheduledDate);
 
             return "Your payment is being scheduled. You'll receive confirmation shortly.";
 

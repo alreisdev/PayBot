@@ -6,7 +6,6 @@ import com.agile.paybot.financial.exception.BillAlreadyPaidException;
 import com.agile.paybot.financial.exception.BillNotFoundException;
 import com.agile.paybot.financial.repository.BillRepository;
 import com.agile.paybot.financial.repository.PaymentRepository;
-import com.agile.paybot.shared.dto.BillDTO;
 import com.agile.paybot.shared.dto.PaymentResultDTO;
 import com.agile.paybot.shared.enums.BillStatus;
 import lombok.RequiredArgsConstructor;
@@ -32,18 +31,25 @@ public class PaymentService {
     }
 
     public PaymentResultDTO processPayment(Long billId, BigDecimal amount, String requestId) {
-        BillDTO bill = billService.getBillById(billId)
+        // Acquire pessimistic write lock on the bill row to prevent TOCTOU race
+        Bill bill = billRepository.findByIdForUpdate(billId)
                 .orElseThrow(() -> new BillNotFoundException(billId));
 
-        if (bill.status() == BillStatus.PAID) {
+        if (bill.getStatus() == BillStatus.PAID) {
             throw new BillAlreadyPaidException(billId);
+        }
+
+        // Validate payment amount matches bill amount
+        if (amount.compareTo(bill.getAmount()) != 0) {
+            throw new IllegalArgumentException(
+                    String.format("Payment amount $%.2f does not match bill amount $%.2f",
+                            amount, bill.getAmount()));
         }
 
         String confirmationNumber = generateConfirmationNumber();
 
-        Bill billEntity = billRepository.getReferenceById(billId);
         Payment payment = new Payment();
-        payment.setBill(billEntity);
+        payment.setBill(bill);
         payment.setAmountPaid(amount);
         payment.setPaymentDate(LocalDateTime.now());
         payment.setConfirmationNumber(confirmationNumber);
@@ -51,13 +57,15 @@ public class PaymentService {
         payment.setRequestId(requestId);
         paymentRepository.save(payment);
 
-        billService.markAsPaid(billId);
+        // Mark bill as paid on the locked entity directly
+        bill.setStatus(BillStatus.PAID);
+        billRepository.save(bill);
 
         return new PaymentResultDTO(
                 true,
                 confirmationNumber,
                 String.format("Payment successful! Your %s bill of $%.2f has been paid.",
-                        bill.billerName(), amount)
+                        bill.getBillerName(), amount)
         );
     }
 
