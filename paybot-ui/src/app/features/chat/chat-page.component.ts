@@ -96,7 +96,7 @@ export class ChatPageComponent implements OnInit, OnDestroy {
       next: () => {
         // Request accepted - waiting for WebSocket response
         // Loading state remains true until WebSocket message arrives
-        console.log('Message sent, waiting for WebSocket response...');
+        // Request accepted — waiting for WebSocket response
       },
       error: (error: Error) => {
         this.messageStore.setError(error.message);

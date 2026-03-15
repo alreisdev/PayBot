@@ -54,7 +54,7 @@ export class WebSocketService implements OnDestroy {
    */
   connect(sessionId: string): void {
     if (this.client?.connected && this.currentSessionId === sessionId) {
-      console.log('WebSocket already connected to session:', sessionId);
+      // Already connected to this session
       return;
     }
 
@@ -65,7 +65,7 @@ export class WebSocketService implements OnDestroy {
 
     this.currentSessionId = sessionId;
     const wsUrl = this.getWebSocketUrl();
-    console.log('Connecting to WebSocket at:', wsUrl, 'for session:', sessionId);
+    // Connecting to WebSocket
 
     this.client = new Client({
       // Use SockJS for fallback transport
@@ -81,7 +81,7 @@ export class WebSocketService implements OnDestroy {
       // Connection callbacks
       onConnect: () => {
         this.ngZone.run(() => {
-          console.log('WebSocket connected successfully');
+          // WebSocket connected
           this.reconnectAttempts = 0;
           this.connectionSubject.next(true);
           this.subscribeToMessages();
@@ -90,7 +90,6 @@ export class WebSocketService implements OnDestroy {
 
       onDisconnect: () => {
         this.ngZone.run(() => {
-          console.log('WebSocket disconnected');
           this.connectionSubject.next(false);
         });
       },
@@ -98,7 +97,6 @@ export class WebSocketService implements OnDestroy {
       onStompError: (frame) => {
         this.ngZone.run(() => {
           console.error('STOMP error:', frame.headers['message']);
-          console.error('Details:', frame.body);
           this.connectionSubject.next(false);
           this.attemptReconnect();
         });
@@ -106,7 +104,7 @@ export class WebSocketService implements OnDestroy {
 
       onWebSocketClose: () => {
         this.ngZone.run(() => {
-          console.log('WebSocket connection closed');
+          // WebSocket connection closed
           this.connectionSubject.next(false);
           this.attemptReconnect();
         });
@@ -114,7 +112,7 @@ export class WebSocketService implements OnDestroy {
 
       onWebSocketError: (error) => {
         this.ngZone.run(() => {
-          console.error('WebSocket error:', error);
+          console.error('WebSocket error');
           this.connectionSubject.next(false);
         });
       }
@@ -147,7 +145,7 @@ export class WebSocketService implements OnDestroy {
       this.ngZone.run(() => {
         try {
           const chatResponse: ChatResponse = JSON.parse(message.body);
-          console.log('Received WebSocket message:', chatResponse);
+          // Message received
           this.messageSubject.next(chatResponse);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -155,7 +153,7 @@ export class WebSocketService implements OnDestroy {
       });
     });
 
-    console.log('Subscribed to', topic);
+    // Subscribed to session topic
   }
 
   /**
@@ -172,7 +170,7 @@ export class WebSocketService implements OnDestroy {
     }
 
     this.reconnectAttempts++;
-    console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    // Attempting reconnect
 
     this.reconnectTimeout = setTimeout(() => {
       if (this.currentSessionId) {
@@ -201,7 +199,6 @@ export class WebSocketService implements OnDestroy {
     }
 
     this.connectionSubject.next(false);
-    console.log('WebSocket disconnected');
   }
 
   /**
