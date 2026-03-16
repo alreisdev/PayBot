@@ -17,8 +17,8 @@ RUN mvn dependency:go-offline -B
 # Copy source code
 COPY paybot-ai-service/src ./src
 
-# Build the application
-RUN mvn package -DskipTests -B
+# Build the application (tests run during build)
+RUN mvn package -B
 
 # Stage 2: Run
 FROM eclipse-temurin:17-jre-alpine
