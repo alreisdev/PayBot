@@ -46,7 +46,7 @@ public class ChatService {
 
             Guidelines:
             - Always be friendly, professional, and concise
-            - When listing bills, format them clearly with bill type, biller name, amount, and due date
+            - When listing bills, format each bill on its own line using bullet points (e.g., "• Biller Name (type) - $amount due YYYY-MM-DD")
             - Before processing a payment or scheduling, ALWAYS confirm with the user:
               * Which bill they want to pay (show the bill ID, biller name, and amount)
               * For scheduled payments, confirm the date

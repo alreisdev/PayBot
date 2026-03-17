@@ -1,73 +1,69 @@
 # PayBot - AI-Powered Bill Payment Chatbot
 
-A conversational chatbot for managing and paying bills using natural language, powered by Google Gemini.
+A conversational chatbot for managing and paying bills using natural language, powered by Google Gemini with Spring AI function calling. Split into two backend services communicating via REST and RabbitMQ (Choreography Saga pattern).
 
 ## Architecture
 
 ```
-┌─────────────────┐  POST /api/chat  ┌──────────────────┐
-│  Angular UI     │─────────────────▶│  Spring Boot API │
-│  (Chat Interface)│   202 Accepted   │  (REST + STOMP)  │
-│  localhost:4200 │                  └────────┬─────────┘
-└────────┬────────┘                           │
-         │                           ┌────────▼─────────┐
-         │  WebSocket                │    RabbitMQ      │
-         │  /topic/messages/{session}│  (Message Queue) │
-         │                           └────────┬─────────┘
-         │                                    │
-         │                           ┌────────▼─────────┐
-         │◀──────────────────────────│  ChatTaskListener │
-         │                           │  (Async Worker)  │
-                                     └────────┬─────────┘
+                                  ┌──────────────────────────┐
+┌───────────────┐  POST /api/chat │  paybot-ai-service       │ :8080
+│  Angular UI   │────────────────▶│  (LLM + Chat + WebSocket)│
+│  :4200        │  WebSocket      │                          │
+│               │◀────────────────│                          │
+└───────────────┘                 └───────┬──────┬───────────┘
+                                          │      │
+                           REST (bills)   │      │ RabbitMQ (saga)
+                                          │      │
+                                  ┌───────▼──────▼───────────┐
+                                  │ paybot-financial-service  │ :8081
+                                  │ (Bills + Payments + DB)   │
+                                  └───────────┬──────────────┘
                                               │
-                               ┌──────────────┼──────────────┐
-                               │              │              │
-                      ┌────────▼───────┐ ┌────▼─────┐ ┌──────▼──────┐
-                      │   Gemini LLM   │ │  Redis   │ │ PostgreSQL  │
-                      │(Function Calls)│ │(Sessions)│ │(Bills/Pay)  │
-                      └────────────────┘ └──────────┘ └─────────────┘
+                                  ┌───────────▼──────────────┐
+                                  │     PostgreSQL            │
+                                  └──────────────────────────┘
 ```
 
-**Async Flow:**
-1. User sends message via REST (`POST /api/chat`) with `sessionId` and `requestId`
-2. Backend checks Redis for duplicate `requestId` (idempotency)
-3. Request queued in RabbitMQ, returns `202 Accepted`
-4. `ChatTaskListener` fetches conversation history from Redis
-5. Gemini LLM processes message with function calling
-6. Response + history saved to Redis (24h TTL)
-7. Response sent to frontend via WebSocket (`/topic/messages/{sessionId}`)
-8. On failure: retry up to 3 times, then route to Dead Letter Queue (`chat.requests.error`)
+**Saga Flows (async via RabbitMQ):**
+1. **Payment**: Gemini calls `processPayment` → AI publishes `PaymentCommandEvent` → Financial processes (DB idempotency) → publishes `PaymentResultEvent` → AI pushes confirmation via WebSocket
+2. **Schedule**: Gemini calls `schedulePayment` → AI publishes `SchedulePaymentCommandEvent` → Financial creates scheduled record → publishes `SchedulePaymentResultEvent` → AI pushes confirmation via WebSocket
+
+**Inter-service REST** (via OpenFeign with Resilience4j fallbacks): bill queries, scheduled payment listings, cancellations
 
 ## Prerequisites
 
 - **Docker & Docker Compose** (recommended) OR
 - **Java 17+** (Amazon Corretto, OpenJDK, etc.)
 - **Node.js 18+** and npm (for Angular frontend)
-- **Gemini API Key** - Get one free from [Google AI Studio](https://aistudio.google.com/apikey)
+- **Google Cloud Service Account** with Gemini API access (credentials JSON)
 
 ## Quick Start with Docker (Recommended)
 
 ```bash
-# Set your Gemini API key
-set GEMINI_API_KEY=your-api-key-here   # Windows CMD
-$env:GEMINI_API_KEY="your-api-key"     # PowerShell
-export GEMINI_API_KEY="your-api-key"   # Linux/Mac
+# Clean start (recommended if queues have changed)
+docker-compose down -v
 
 # Build and run
 docker-compose up --build
 ```
 
-Access the app at **http://localhost:4200**
+Access the app:
+- **Frontend**: http://localhost:4200
+- **AI Service Health**: http://localhost:8080/api/health
+- **Financial Service OpenAPI**: http://localhost:8081/swagger-ui.html
+- **RabbitMQ Management**: http://localhost:15672 (paybot/paybot123)
+- **Zipkin (Distributed Tracing)**: http://localhost:9411
 
 The Docker setup includes:
-- **Backend**: Spring Boot on port 8080
+- **AI Service**: Spring Boot on port 8080 (LLM orchestration, chat, WebSocket)
+- **Financial Service**: Spring Boot on port 8081 (bills, payments, database)
 - **Frontend**: Angular served via Nginx on port 4200
-- **Database**: PostgreSQL 16 with persistent volume
-- **Message Broker**: RabbitMQ with management UI on port 15672
-- **Cache/Sessions**: Redis 7 on port 6379 (idempotency + chat history)
+- **Database**: PostgreSQL 16 with Flyway migrations
+- **Message Broker**: RabbitMQ 3 (async saga messaging)
+- **Cache/Sessions**: Redis 7 (idempotency + chat history)
+- **Tracing**: Zipkin on port 9411 (distributed trace visualization)
 - Health checks and automatic service dependencies
-- Nginx proxy routing `/api/*` and `/ws-paybot` (WebSocket) to the backend
-- Flyway database migrations run automatically on startup
+- Nginx proxy routing `/api/*` and `/ws-paybot` (WebSocket) to the AI service
 
 ### Docker Commands
 
@@ -77,6 +73,9 @@ docker-compose up -d
 
 # View logs
 docker-compose logs -f
+
+# View logs for a specific service
+docker-compose logs -f paybot-ai-service
 
 # Stop services
 docker-compose down
@@ -89,9 +88,6 @@ docker exec -it paybot-postgres psql -U paybot -d paybotdb
 
 # View tables
 docker exec -it paybot-postgres psql -U paybot -d paybotdb -c "\dt"
-
-# Access RabbitMQ Management UI
-# Open http://localhost:15672 (login: paybot / paybot123)
 
 # View queue depths (check DLQ for poison pills)
 docker exec -it paybot-rabbitmq rabbitmqctl list_queues name messages
@@ -106,50 +102,40 @@ docker exec -it paybot-redis redis-cli KEYS "chat:history:*"
 docker exec -it paybot-redis redis-cli KEYS "chat:request:*"
 ```
 
-> **Data Persistence**: PostgreSQL and Redis data are stored in Docker volumes (`postgres_data`, `redis_data`). Your data persists across container restarts. Use `docker-compose down -v` to delete volumes and reset all data.
+> **Data Persistence**: PostgreSQL and Redis data are stored in Docker volumes. Your data persists across container restarts. Use `docker-compose down -v` to delete volumes and reset all data.
 
-## Quick Start (Manual)
+## Distributed Tracing with Zipkin
 
-### 1. Set up Gemini API Key
+Both backend services export traces to Zipkin, allowing you to visualize request flows across the entire system.
 
-```bash
-# Windows (PowerShell)
-$env:GEMINI_API_KEY="your-api-key-here"
+**Access the Zipkin UI at http://localhost:9411**
 
-# Windows (CMD)
-set GEMINI_API_KEY=your-api-key-here
+### What You Can Visualize
+- **Trace timeline** — full request flow across both services (AI service → Financial service)
+- **Span details** — latency per service hop, including Feign REST calls and RabbitMQ messaging
+- **Dependency graph** — auto-generated service topology showing how services communicate
 
-# Linux/Mac
-export GEMINI_API_KEY="your-api-key-here"
-```
+### How to Use
+1. Send a chat message via the UI at http://localhost:4200
+2. Open Zipkin at http://localhost:9411
+3. Select `paybot-ai-service` or `paybot-financial-service` from the service dropdown
+4. Click **Run Query** to see recent traces
+5. Click a trace to see the full span waterfall across services
+6. Click **Dependencies** in the nav bar for the service topology graph
 
-### 2. Start the Backend
+### Tracing Configuration
 
-```bash
-cd JavaPayBotService
-./mvnw spring-boot:run
-```
+Spring Boot 4 removed the Zipkin tracing auto-configuration from the actuator module. Both services use a manual `TracingConfig.java` that wires the full OpenTelemetry → Zipkin pipeline:
 
-The backend will start at `http://localhost:8080`
+| Bean | Purpose |
+|------|---------|
+| `ZipkinSpanExporter` | Sends spans to Zipkin at the configured endpoint |
+| `SdkTracerProvider` | OTel SDK tracer with service name + batch span processor |
+| `OpenTelemetry` | OTel SDK instance with B3 context propagation |
+| `OtelTracer` → `Tracer` | Micrometer bridge to the OTel SDK |
+| `TracingObservationHandlerRegistrar` | Registers tracing handlers with Spring's `ObservationRegistry` |
 
-- Health check: `GET http://localhost:8080/api/health`
-
-> **Note**: Manual setup requires:
-> - PostgreSQL running on port 5432 with database `paybotdb`
-> - RabbitMQ running on port 5672
-> - Redis running on port 6379
->
-> For easier setup, use Docker instead.
-
-### 3. Start the Frontend
-
-```bash
-cd paybot-ui
-npm install
-ng serve
-```
-
-The frontend will start at `http://localhost:4200`
+The Zipkin endpoint is configured via `management.zipkin.tracing.endpoint` in `application.properties` and overridden in Docker via the `MANAGEMENT_ZIPKIN_TRACING_ENDPOINT` environment variable.
 
 ## Sample Conversations
 
@@ -160,76 +146,104 @@ Try these prompts:
 - "I want to pay my electric bill"
 - "How much is my internet bill?"
 - "Pay my water bill"
+- "Schedule my rent payment for next week"
+- "Show my scheduled payments"
+- "Cancel my scheduled payment"
 
 ## Project Structure
 
 ```
 Paybot/
-├── docker-compose.yml           # Container orchestration (PostgreSQL, RabbitMQ, Backend, Frontend)
-├── JavaPayBotService/           # Spring Boot Backend
-│   ├── Dockerfile               # Multi-stage build
-│   ├── .dockerignore
-│   ├── src/main/java/com/agile/paybot/
-│   │   ├── PayBotApplication.java
-│   │   ├── config/
-│   │   │   ├── ChatQueueConfig.java   # RabbitMQ queue/exchange/DLQ setup
-│   │   │   ├── WebSocketConfig.java   # STOMP WebSocket config
-│   │   │   ├── RedisConfig.java       # Redis templates + ObjectMapper
-│   │   │   ├── RequestContext.java    # ThreadLocal for requestId propagation
-│   │   │   └── CorsConfig.java        # CORS settings
-│   │   ├── controller/
-│   │   │   ├── ChatController.java    # POST /api/chat (queues to RabbitMQ)
-│   │   │   └── BillController.java    # GET /api/bills (debug)
-│   │   ├── listener/
-│   │   │   └── ChatTaskListener.java  # @RabbitListener (async processing)
-│   │   ├── service/
-│   │   │   ├── ChatService.java       # LLM orchestration
-│   │   │   ├── BillService.java       # Bill operations
-│   │   │   └── PaymentService.java    # Payment processing
-│   │   ├── function/
-│   │   │   └── PayBotTools.java       # @Tool methods for Gemini
-│   │   └── domain/
-│   │       ├── entity/                # JPA entities
-│   │       └── dto/                   # Data transfer objects
-│   └── src/main/resources/
-│       ├── application.properties
-│       └── db/migration/            # Flyway SQL migrations
-│           ├── V1__Initial_Schema.sql
-│           ├── V2__Seed_Data.sql
-│           └── V3__Add_Request_Id_To_Payments.sql
+├── docker-compose.yml              # Container orchestration
+├── paybot-shared/                   # Shared library (DTOs, enums, saga events)
+│   └── src/main/java/com/agile/paybot/shared/
+│       ├── dto/                     # BillDTO, ChatRequest, ChatResponse, etc.
+│       ├── enums/                   # BillStatus, ScheduledPaymentStatus
+│       └── event/                   # Saga events (command + result)
 │
-└── paybot-ui/                   # Angular Frontend
-    ├── Dockerfile               # Multi-stage build
-    ├── .dockerignore
-    ├── nginx.conf               # Nginx config (SPA + WebSocket proxy)
+├── paybot-ai-service/               # AI orchestration service (:8080)
+│   ├── Dockerfile
+│   └── src/main/java/com/agile/paybot/
+│       ├── PayBotApplication.java   # Main entry (@EnableFeignClients)
+│       ├── client/                  # OpenFeign client + Resilience4j fallback
+│       ├── config/                  # Queue, CORS, Redis, WebSocket, Security, Tracing
+│       ├── controller/              # ChatController, GlobalExceptionHandler
+│       ├── function/                # PayBotTools (@Tool methods for Gemini)
+│       ├── listener/                # Chat, Payment result, Schedule result listeners
+│       └── service/                 # ChatService (Gemini + Redis history)
+│
+├── paybot-financial-service/        # Financial data service (:8081)
+│   ├── Dockerfile
+│   └── src/main/java/com/agile/paybot/financial/
+│       ├── FinancialServiceApplication.java  # Main entry (@EnableScheduling)
+│       ├── config/                  # Queue, Flyway, Security, Tracing
+│       ├── controller/              # InternalBillController, InternalPaymentController
+│       ├── domain/entity/           # Bill, Payment, ScheduledPayment
+│       ├── listener/                # Payment + Schedule saga participants
+│       ├── repository/              # JPA repositories
+│       ├── scheduler/               # ScheduledPaymentExecutor (5 min job)
+│       └── service/                 # BillService, PaymentService, ScheduledPaymentService
+│
+└── paybot-ui/                       # Angular frontend (:4200)
+    ├── Dockerfile
+    ├── nginx.conf                   # Nginx (SPA + API/WebSocket proxy)
     └── src/app/
-        ├── core/services/
-        │   ├── chat.service.ts        # HTTP + WebSocket integration
-        │   ├── websocket.service.ts   # STOMP WebSocket client
-        │   └── message-store.service.ts
-        └── features/chat/       # Chat components
+        ├── core/services/           # chat.service.ts, message-store.service.ts
+        └── features/chat/           # Chat page, message list, chat input components
 ```
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| AI Service | Spring Boot 4.0.3, Java 17, Spring AI 2.0.0-M2 |
+| LLM | Google Gemini 2.0 Flash via Spring AI |
+| Inter-service REST | Spring Cloud OpenFeign + Resilience4j circuit breaker |
+| Async Messaging | RabbitMQ 3 (Choreography Saga pattern) |
+| Database | PostgreSQL 16 (Flyway migrations) |
+| Cache/Sessions | Redis 7 (idempotency + chat history) |
+| Real-time | WebSocket with STOMP over SockJS |
+| Distributed Tracing | OpenTelemetry + Zipkin |
+| Security | Spring Security (endpoint authorization) |
+| Frontend | Angular 18 (Standalone Components, Signals) |
+| Containerization | Docker, Docker Compose |
+| Web Server | Nginx (production) |
 
 ## API Endpoints
 
-### Chat Endpoint (Async)
-```
-POST /api/chat
-Content-Type: application/json
+### AI Service (:8080)
 
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/chat` | Send chat message (queued via RabbitMQ) |
+| GET | `/api/health` | Health check |
+
+### Financial Service (:8081)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/internal/bills` | List bills (params: userId, billType, currentMonth) |
+| GET | `/api/internal/bills/{id}` | Get bill by ID |
+| GET | `/api/internal/bills/health` | Health check |
+| POST | `/api/internal/payments` | Process payment (params: billId, amount, requestId) |
+| GET | `/api/internal/payments/by-request-id` | Idempotency lookup |
+| GET | `/api/internal/payments/scheduled` | List scheduled payments |
+| POST | `/api/internal/payments/scheduled/{id}/cancel` | Cancel scheduled payment |
+
+OpenAPI docs: http://localhost:8081/swagger-ui.html
+
+### Chat Request Format
+```json
 {
   "message": "Show me my bills",
-  "requestId": "req_1710182400000_abc123def",
-  "sessionId": "session_1710182400000_xyz789"
+  "requestId": "unique-uuid",
+  "sessionId": "session-uuid",
+  "conversationHistory": []
 }
 ```
 
-- `requestId`: Unique ID for idempotency (duplicate requests are discarded)
-- `sessionId`: Identifies the conversation (history stored server-side in Redis)
-
 ### Response (Immediate)
 ```json
-HTTP 202 Accepted
 {
   "status": "Request accepted for processing"
 }
@@ -245,32 +259,76 @@ Connect to `/ws-paybot` and subscribe to `/topic/messages/{sessionId}`:
   },
   "metadata": {
     "model": "gemini-2.0-flash",
-    "sessionId": "session_1710182400000_xyz789",
-    "requestId": "req_1710182400000_abc123def",
+    "sessionId": "session-uuid",
+    "requestId": "unique-uuid",
     "processingTimeMs": 1250
   }
 }
 ```
 
-### Health Check
-```
-GET /api/health
+## Spring AI Integration
+
+PayBot uses the `@Tool` annotation pattern for Gemini function calling:
+
+```java
+@Component
+public class PayBotTools {
+    private final FinancialClient financialClient;  // OpenFeign declarative client
+    private final RabbitTemplate rabbitTemplate;     // For saga commands
+
+    @Tool(description = "Get user's bills...")
+    public String getBills(@ToolParam(description = "...") String billType) {
+        // Calls FinancialClient (Feign) — fallback returns empty list if service is down
+    }
+
+    @Tool(description = "Process payment...")
+    public String processPayment(@ToolParam(...) Long billId, ...) {
+        // Publishes PaymentCommandEvent to RabbitMQ (async saga)
+    }
+}
 ```
 
-## Tech Stack
+Tools are registered with ChatClient via `.tools(payBotTools)`.
 
-| Component | Technology |
-|-----------|------------|
-| Backend | Spring Boot 4.0.3, Java 17 |
-| LLM Integration | Spring AI 2.0.0-M2 + Google GenAI |
-| Database | PostgreSQL 16 (Flyway migrations) |
-| Message Broker | RabbitMQ 3 (async processing) |
-| Cache/Sessions | Redis 7 (idempotency + chat history) |
-| Real-time | WebSocket with STOMP over SockJS |
-| Frontend | Angular 18 |
-| Styling | SCSS |
-| Containerization | Docker, Docker Compose |
-| Web Server | Nginx (production) |
+### Available Tools
+
+| Tool | Type | Target |
+|------|------|--------|
+| `getBills` | Sync REST | Financial service |
+| `getBillDetails` | Sync REST | Financial service |
+| `processPayment` | Async Saga | RabbitMQ → Financial service |
+| `schedulePayment` | Async Saga | RabbitMQ → Financial service |
+| `getScheduledPayments` | Sync REST | Financial service |
+| `cancelScheduledPayment` | Sync REST | Financial service |
+
+### OpenFeign + Resilience4j
+
+Inter-service REST uses Spring Cloud OpenFeign with circuit breaker fallbacks:
+
+```java
+@FeignClient(name = "financial-service", url = "${financial.service.url}",
+             fallback = FinancialClientFallback.class)
+public interface FinancialClient {
+    @GetMapping("/api/internal/bills")
+    List<BillDTO> getUnpaidBills(@RequestParam("userId") String userId);
+}
+```
+
+**Fallback behavior** (when financial service is down):
+- Read operations (bills, payments) → return empty list / null
+- Write operations (cancel) → throw exception with user-friendly message
+- Circuit breaker: opens after 50% failure rate in 10-call window, half-open after 10s
+
+## RabbitMQ Queues
+
+| Queue | Exchange | Routing Key | Purpose |
+|-------|----------|-------------|---------|
+| `chat.requests` | `chat.exchange` | `chat.request` | Chat messages → AI processing |
+| `chat.requests.error` | `chat.requests.dlx` | `error` | DLQ for poison pills |
+| `financial.payment.command` | `financial.exchange` | `payment.command` | AI → Financial (pay bill) |
+| `financial.payment.result` | `financial.exchange` | `payment.result` | Financial → AI (payment confirmation) |
+| `financial.schedule.command` | `financial.exchange` | `schedule.command` | AI → Financial (schedule payment) |
+| `financial.schedule.result` | `financial.exchange` | `schedule.result` | Financial → AI (schedule confirmation) |
 
 ## Self-Healing Idempotency (Double-Check Pattern)
 
@@ -322,32 +380,6 @@ In a distributed system, a worker can crash at any point during processing. If i
               └──────────────────────────┘
 ```
 
-### Key Components
-
-| Component | File | Role |
-|-----------|------|------|
-| `ChatTaskListener` | `listener/ChatTaskListener.java` | Orchestrates the Double-Check flow with manual RabbitMQ ACK/NACK |
-| `RequestContext` | `config/RequestContext.java` | ThreadLocal that threads `requestId` from listener → ChatService → PayBotTools |
-| `PaymentService` | `service/PaymentService.java` | Stores `requestId` on Payment entity; provides `findPaymentByRequestId()` |
-| `V3 Migration` | `db/migration/V3__Add_Request_Id_To_Payments.sql` | Adds indexed `request_id` column to `payments` table |
-
-### How RequestId Flows Through the Stack
-
-The `requestId` must reach the `PayBotTools.processPayment()` method, but Gemini controls the function call signatures — we can't add `requestId` as a tool parameter. The solution is a `ThreadLocal`:
-
-```
-ChatTaskListener                 ChatService                    PayBotTools
-     │                               │                              │
-     │  processMessage(request) ───▶ │                              │
-     │                               │  RequestContext.set(reqId)   │
-     │                               │  call Gemini ──────────────▶ │
-     │                               │                              │  RequestContext.get()
-     │                               │                              │  paymentService.processPayment(
-     │                               │                              │      billId, amount, requestId)
-     │                               │  RequestContext.clear()      │
-     │  ◀─── response ──────────────│                              │
-```
-
 ### Error Recovery Behavior
 
 | Scenario | Redis State | DB State | Action |
@@ -361,8 +393,6 @@ ChatTaskListener                 ChatService                    PayBotTools
 ## Dead Letter Queue (Poison Pill Protection)
 
 Messages that fail repeatedly are "poison pills" — they'll loop forever unless stopped. The DLQ pattern catches them after a configurable retry limit.
-
-### How It Works
 
 ```
                   ┌────────────────┐
@@ -389,15 +419,6 @@ Messages that fail repeatedly are "poison pills" — they'll loop forever unless
                                                   └─────────────────┘
 ```
 
-### RabbitMQ Queues & Exchanges
-
-| Name | Type | Purpose |
-|------|------|---------|
-| `chat.requests` | Queue | Main processing queue with DLX arguments |
-| `chat.exchange` | Direct Exchange | Routes incoming requests to main queue |
-| `chat.requests.error` | Queue | Dead letter queue for poison pill messages |
-| `chat.requests.dlx` | Direct Exchange | Routes rejected messages to error queue |
-
 ### Retry Behavior
 
 | Retry Count | Action | User Notification |
@@ -406,48 +427,84 @@ Messages that fail repeatedly are "poison pills" — they'll loop forever unless
 | 1-2 | NACK + requeue, retry | — |
 | 3+ (max reached) | NACK without requeue (routes to DLQ) | WebSocket: *"I'm having trouble processing this specific request. Please try rephrasing."* |
 
-The retry count is tracked via the `x-death` header that RabbitMQ automatically attaches to dead-lettered messages. The `getRetryCount()` method in `ChatTaskListener` extracts this count.
+## Testing
+
+### Manual Testing (curl)
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Show me my bills","requestId":"test-1","sessionId":"sess-1","conversationHistory":[]}'
+```
+
+### Verify Saga Queues
+```bash
+docker exec paybot-rabbitmq rabbitmqctl list_queues name messages consumers
+```
+
+### Unit Tests
+```bash
+# AI Service
+cd paybot-ai-service && ./mvnw test
+
+# Financial Service
+cd paybot-financial-service && ./mvnw test
+
+# Frontend
+cd paybot-ui && npm test
+```
 
 ### Inspecting the DLQ
-
 ```bash
-# Check messages in the error queue via RabbitMQ Management UI
+# Via RabbitMQ Management UI
 # Open http://localhost:15672 → Queues → chat.requests.error
 
-# Or via CLI inside the container
+# Via CLI
 docker exec -it paybot-rabbitmq rabbitmqctl list_queues name messages
 ```
 
-## Key Learnings
+## Environment Variables
 
-This project demonstrates:
-
-1. **LLM Function Calling** - How to let an LLM call backend functions
-2. **Spring AI** - Integrating AI into Spring applications
-3. **Async Messaging** - Decoupling request/response with RabbitMQ
-4. **WebSocket Communication** - Real-time responses with STOMP
-5. **Conversational State** - Server-side chat history with Redis
-6. **Idempotency** - Preventing duplicate processing with Redis SETNX
-7. **Self-Healing Recovery** - Double-Check pattern using DB as source of truth when Redis state is stale
-8. **ThreadLocal Context Propagation** - Passing request context through LLM function call boundaries
-9. **Manual Message Acknowledgment** - RabbitMQ ACK/NACK for crash-safe message processing
-10. **Dead Letter Queues** - Poison pill protection with DLX routing after retry exhaustion
-11. **Tool/Function Design** - Defining clear tool contracts for LLMs
-12. **Full-Stack Architecture** - Angular + Spring Boot + RabbitMQ + Redis + AI
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `GOOGLE_APPLICATION_CREDENTIALS` | ai-service | Path to Gemini service account JSON |
+| `FINANCIAL_SERVICE_URL` | ai-service | URL of financial service (default: `http://paybot-financial-service:8081`) |
+| `SPRING_DATASOURCE_URL` | financial-service | PostgreSQL JDBC URL |
+| `SPRING_RABBITMQ_HOST` | both | RabbitMQ hostname |
+| `SPRING_DATA_REDIS_HOST` | ai-service | Redis hostname |
+| `MANAGEMENT_ZIPKIN_TRACING_ENDPOINT` | both | Zipkin span collector URL |
 
 ## Troubleshooting
 
-### "GEMINI_API_KEY not set"
-Ensure you've set the environment variable before starting the backend.
-
-### Build fails with dependency errors
+### "Queue args mismatch" error
+RabbitMQ queue arguments have changed. Reset with:
 ```bash
-cd JavaPayBotService
-./mvnw clean install -U
+docker-compose down -v
+docker-compose up --build
 ```
 
+### Build fails with dependency errors
+Rebuild the shared library first:
+```bash
+cd paybot-shared && mvn clean install
+cd ../paybot-ai-service && ./mvnw clean package
+cd ../paybot-financial-service && ./mvnw clean package
+```
+
+### Financial service unreachable from AI service
+Check that the financial service is healthy and that `depends_on` ordering is correct in `docker-compose.yml`:
+```bash
+curl http://localhost:8081/api/internal/bills/health
+docker-compose logs paybot-financial-service
+```
+
+### No traces appearing in Zipkin
+Both services require the manual `TracingConfig.java` (Spring Boot 4 removed Zipkin auto-config). Verify:
+1. Zipkin container is healthy: `docker ps --filter name=zipkin`
+2. Send a request, wait 5-10 seconds, then check: `curl http://localhost:9411/api/v2/services`
+3. Both `paybot-ai-service` and `paybot-financial-service` should appear in the response
+
 ### CORS errors
-The backend is configured to allow requests from `http://localhost:4200`. If using a different port, update `CorsConfig.java`.
+The AI service is configured to allow requests from `http://localhost:4200`. If using a different port, update `CorsConfig.java`.
 
 ## License
 
