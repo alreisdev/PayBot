@@ -1,0 +1,34 @@
+# OpenTelemetry Collector configuration.
+# Deployed as a sidecar in each backend pod.
+# Receives OTLP traces from the app and exports to Google Cloud Trace.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: paybot
+  labels:
+    project: paybot
+data:
+  otel-collector-config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 256
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 128
+        spike_limit_mib: 32
+    exporters:
+      googlecloud:
+        project: paybot-gemini
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [googlecloud]

@@ -14,12 +14,12 @@ import io.micrometer.tracing.propagation.Propagator;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.context.propagation.ContextPropagators;
-import io.opentelemetry.extension.trace.propagation.B3Propagator;
-import io.opentelemetry.exporter.zipkin.ZipkinSpanExporter;
+import io.opentelemetry.context.propagation.TextMapPropagator;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
+import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.sdk.trace.samplers.Sampler;
 import io.opentelemetry.semconv.ServiceAttributes;
 import org.springframework.beans.factory.annotation.Value;
@@ -38,30 +38,22 @@ public class TracingConfig {
     }
 
     @Bean
-    public ZipkinSpanExporter zipkinSpanExporter(
-            @Value("${management.zipkin.tracing.endpoint:http://localhost:9411/api/v2/spans}") String endpoint) {
-        return ZipkinSpanExporter.builder()
-                .setEndpoint(endpoint)
-                .build();
-    }
-
-    @Bean
-    public SdkTracerProvider sdkTracerProvider(ZipkinSpanExporter zipkinSpanExporter,
+    public SdkTracerProvider sdkTracerProvider(SpanExporter spanExporter,
             @Value("${spring.application.name:paybot-financial-service}") String serviceName) {
         Resource resource = Resource.getDefault()
                 .merge(Resource.create(Attributes.of(ServiceAttributes.SERVICE_NAME, serviceName)));
         return SdkTracerProvider.builder()
                 .setResource(resource)
                 .setSampler(Sampler.alwaysOn())
-                .addSpanProcessor(BatchSpanProcessor.builder(zipkinSpanExporter).build())
+                .addSpanProcessor(BatchSpanProcessor.builder(spanExporter).build())
                 .build();
     }
 
     @Bean
-    public OpenTelemetry openTelemetry(SdkTracerProvider sdkTracerProvider) {
+    public OpenTelemetry openTelemetry(SdkTracerProvider sdkTracerProvider, TextMapPropagator textMapPropagator) {
         return OpenTelemetrySdk.builder()
                 .setTracerProvider(sdkTracerProvider)
-                .setPropagators(ContextPropagators.create(B3Propagator.injectingMultiHeaders()))
+                .setPropagators(ContextPropagators.create(textMapPropagator))
                 .build();
     }
 

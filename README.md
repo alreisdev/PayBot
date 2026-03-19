@@ -104,38 +104,187 @@ docker exec -it paybot-redis redis-cli KEYS "chat:request:*"
 
 > **Data Persistence**: PostgreSQL and Redis data are stored in Docker volumes. Your data persists across container restarts. Use `docker-compose down -v` to delete volumes and reset all data.
 
-## Distributed Tracing with Zipkin
+## GCP Deployment
 
-Both backend services export traces to Zipkin, allowing you to visualize request flows across the entire system.
+PayBot includes Terraform infrastructure-as-code and Kubernetes manifests for deploying to Google Cloud Platform.
 
-**Access the Zipkin UI at http://localhost:9411**
+### GCP Architecture
 
-### What You Can Visualize
-- **Trace timeline** — full request flow across both services (AI service → Financial service)
-- **Span details** — latency per service hop, including Feign REST calls and RabbitMQ messaging
-- **Dependency graph** — auto-generated service topology showing how services communicate
+```
+                          ┌─────────────────────────────────────────────┐
+                          │                GKE Cluster                  │
+  Internet ──▶ Ingress ──▶│  ┌─────────────┐   ┌──────────────────┐   │
+                          │  │  AI Service  │──▶│ Financial Service │   │
+                          │  │  (2 pods)    │   │ (2 pods)         │   │
+                          │  └──────┬───────┘   └────────┬─────────┘   │
+                          │         │                    │             │
+                          │  ┌──────▼───────┐            │             │
+                          │  │  RabbitMQ    │◀───────────┘             │
+                          │  │ (StatefulSet)│                          │
+                          │  └──────────────┘                          │
+                          └─────────┬──────────────┬───────────────────┘
+                                    │              │
+                          ┌─────────▼──────┐ ┌─────▼──────────┐
+                          │  Memorystore   │ │   Cloud SQL    │
+                          │  (Redis 7)     │ │ (PostgreSQL 16)│
+                          └────────────────┘ └────────────────┘
+```
 
-### How to Use
+### Infrastructure (Terraform)
+
+The `terraform/` directory provisions:
+
+| Resource | Description |
+|----------|-------------|
+| **GKE Cluster** | Standard cluster with Workload Identity, private nodes, autoscaling 2-5 `e2-medium` nodes |
+| **Cloud SQL** | PostgreSQL 16, private IP, daily backups |
+| **Memorystore** | Redis 7 BASIC tier, private service access |
+| **VPC Network** | Custom VPC with pod/service secondary ranges, private service connection |
+| **IAM** | `paybot-sa` service account with Gemini, Secret Manager, Cloud Trace, Cloud SQL roles |
+| **Secret Manager** | Secrets for DB password, RabbitMQ password, Redis password, Gemini credentials |
+
+```bash
+cd terraform
+
+# Configure variables
+cp terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars with your project_id and passwords
+
+# Provision infrastructure
+terraform init
+terraform plan
+terraform apply
+```
+
+### Kubernetes Manifests
+
+The `k8s/` directory contains deployment manifests:
+
+```
+k8s/
+├── namespace.yaml              # paybot namespace
+├── service-account.yaml        # Workload Identity binding
+├── configmap.yaml              # Shared config (profile, Cloud SQL IP, Memorystore host)
+├── otel-collector-config.yaml  # OpenTelemetry Collector sidecar config (OTLP → Cloud Trace)
+├── db-secret.yaml              # Cloud SQL password
+├── rabbitmq/                   # StatefulSet + Service + Secret
+├── financial-service/          # Deployment (1 replica + OTel sidecar) + ClusterIP Service
+├── ai-service/                 # Deployment (1 replica + OTel sidecar) + ClusterIP Service
+└── frontend/                   # Deployment + Service + Ingress
+```
+
+**Deploy to GKE:**
+
+```bash
+# Get cluster credentials
+gcloud container clusters get-credentials paybot-cluster --region us-central1
+
+# Update configmap with Terraform outputs
+# Replace REPLACE_WITH_TERRAFORM_OUTPUT in k8s/configmap.yaml with:
+#   CLOUDSQL_PRIVATE_IP: $(terraform -chdir=terraform output -raw cloudsql_private_ip)
+#   MEMORYSTORE_HOST:    $(terraform -chdir=terraform output -raw memorystore_host)
+
+# Replace PROJECT_ID in service-account.yaml and deployment image references
+
+# Build and push images
+docker build -t gcr.io/PROJECT_ID/paybot-ai-service -f paybot-ai-service/Dockerfile .
+docker build -t gcr.io/PROJECT_ID/paybot-financial-service -f paybot-financial-service/Dockerfile .
+docker build -t gcr.io/PROJECT_ID/paybot-frontend -f paybot-ui/Dockerfile .
+docker push gcr.io/PROJECT_ID/paybot-ai-service
+docker push gcr.io/PROJECT_ID/paybot-financial-service
+docker push gcr.io/PROJECT_ID/paybot-frontend
+
+# Apply manifests in order
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/service-account.yaml
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/otel-collector-config.yaml
+kubectl apply -f k8s/db-secret.yaml
+kubectl apply -f k8s/rabbitmq/
+kubectl apply -f k8s/financial-service/
+kubectl apply -f k8s/ai-service/
+kubectl apply -f k8s/frontend/
+
+# Verify
+kubectl get pods -n paybot
+kubectl get services -n paybot
+```
+
+### Spring Profiles
+
+| Profile | Activated By | Purpose |
+|---------|-------------|---------|
+| *(default)* | No profile set | Local development (localhost connections) |
+| `docker` | Docker Compose | Docker networking (container hostnames) |
+| `gcp` | K8s ConfigMap | GKE deployment (Cloud SQL, Memorystore, Cloud Trace) |
+
+**GCP profile differences:**
+- Database connects to Cloud SQL via private IP
+- Redis connects to Memorystore via private IP
+- RabbitMQ connects to in-cluster StatefulSet
+- Tracing exports via OTLP to OTel Collector sidecar → Google Cloud Trace (W3C propagation) instead of Zipkin (B3)
+- Secrets injected as env vars from K8s Secrets (synced from GCP Secret Manager)
+- Actuator health probes enabled for K8s liveness/readiness
+- Sampling reduced to 10% for production
+
+## Distributed Tracing
+
+Both backend services export traces, allowing you to visualize request flows across the system.
+
+### Local (Zipkin)
+
+Access the Zipkin UI at **http://localhost:9411**
+
+- **Trace timeline** -- full request flow across both services
+- **Span details** -- latency per service hop, including Feign REST calls and RabbitMQ messaging
+- **Dependency graph** -- auto-generated service topology
+
+**How to use:**
 1. Send a chat message via the UI at http://localhost:4200
 2. Open Zipkin at http://localhost:9411
-3. Select `paybot-ai-service` or `paybot-financial-service` from the service dropdown
-4. Click **Run Query** to see recent traces
-5. Click a trace to see the full span waterfall across services
-6. Click **Dependencies** in the nav bar for the service topology graph
+3. Select a service from the dropdown, click **Run Query**
+4. Click a trace to see the full span waterfall
+
+### GCP (Cloud Trace via OpenTelemetry Collector)
+
+When running with the `gcp` profile, traces export to Google Cloud Trace using the **OpenTelemetry Collector sidecar pattern** — the industry standard for tracing in GKE:
+
+```
+┌─────────────────────────────────────────────┐
+│  Pod                                        │
+│  ┌──────────────┐    ┌───────────────────┐  │
+│  │ Spring Boot  │───▶│ OTel Collector    │  │
+│  │ (OTLP gRPC)  │    │ (sidecar)         │  │
+│  └──────────────┘    └───────┬───────────┘  │
+└──────────────────────────────┼──────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │  Google Cloud Trace  │
+                    └─────────────────────┘
+```
+
+Each backend pod includes an OTel Collector sidecar container (`otel/opentelemetry-collector-contrib`) that:
+1. Receives OTLP traces from the app on `localhost:4317` (gRPC)
+2. Batches and exports them to Google Cloud Trace via the `googlecloud` exporter
+3. Uses Workload Identity for authentication (no credentials needed)
+
+View traces in the GCP Console under **Trace > Trace list**.
+
+**Why sidecar instead of direct export?** The Google Cloud Trace client library (`exporter-trace:0.31.0`) is incompatible with Spring Boot 4's OpenTelemetry version (missing `ResourceAttributes` class). The Collector pattern decouples the app from vendor-specific exporters — the app only uses the standard OTLP exporter.
 
 ### Tracing Configuration
 
-Spring Boot 4 removed the Zipkin tracing auto-configuration from the actuator module. Both services use a manual `TracingConfig.java` that wires the full OpenTelemetry → Zipkin pipeline:
+The tracing pipeline is profile-conditional:
 
-| Bean | Purpose |
-|------|---------|
-| `ZipkinSpanExporter` | Sends spans to Zipkin at the configured endpoint |
-| `SdkTracerProvider` | OTel SDK tracer with service name + batch span processor |
-| `OpenTelemetry` | OTel SDK instance with B3 context propagation |
-| `OtelTracer` → `Tracer` | Micrometer bridge to the OTel SDK |
-| `TracingObservationHandlerRegistrar` | Registers tracing handlers with Spring's `ObservationRegistry` |
+| Component | Local / Docker (`!gcp`) | GCP (`gcp` profile) |
+|-----------|------------------------|---------------------|
+| Exporter | `ZipkinSpanExporter` → Zipkin | `OtlpGrpcSpanExporter` → OTel Collector → Cloud Trace |
+| Propagation | B3 (multi-header) | W3C TraceContext |
+| Sampling | 100% | 10% |
+| Config class | `ZipkinTracingConfig.java` | `GcpTracingConfig.java` |
+| Collector config | — | `k8s/otel-collector-config.yaml` |
 
-The Zipkin endpoint is configured via `management.zipkin.tracing.endpoint` in `application.properties` and overridden in Docker via the `MANAGEMENT_ZIPKIN_TRACING_ENDPOINT` environment variable.
+The base `TracingConfig.java` accepts a generic `SpanExporter` and `TextMapPropagator`, wired by the active profile config.
 
 ## Sample Conversations
 
@@ -154,42 +303,64 @@ Try these prompts:
 
 ```
 Paybot/
-├── docker-compose.yml              # Container orchestration
-├── paybot-shared/                   # Shared library (DTOs, enums, saga events)
-│   └── src/main/java/com/agile/paybot/shared/
-│       ├── dto/                     # BillDTO, ChatRequest, ChatResponse, etc.
-│       ├── enums/                   # BillStatus, ScheduledPaymentStatus
-│       └── event/                   # Saga events (command + result)
+├── docker-compose.yml              # Container orchestration (local dev)
+├── terraform/                      # GCP infrastructure (Terraform)
+│   ├── main.tf                     # Provider, required APIs
+│   ├── variables.tf                # Input variables
+│   ├── network.tf                  # VPC, subnet, private service connection
+│   ├── gke.tf                      # GKE cluster + node pool
+│   ├── cloudsql.tf                 # Cloud SQL PostgreSQL 16
+│   ├── memorystore.tf              # Memorystore Redis 7
+│   ├── iam.tf                      # Service account + Workload Identity
+│   ├── secretmanager.tf            # GCP Secret Manager secrets
+│   └── outputs.tf                  # Terraform outputs
 │
-├── paybot-ai-service/               # AI orchestration service (:8080)
+├── k8s/                            # Kubernetes manifests (GKE deployment)
+│   ├── namespace.yaml
+│   ├── service-account.yaml        # Workload Identity
+│   ├── configmap.yaml
+│   ├── otel-collector-config.yaml  # OTel Collector sidecar config
+│   ├── db-secret.yaml              # Cloud SQL password
+│   ├── rabbitmq/                   # StatefulSet + Service + Secret
+│   ├── financial-service/          # Deployment + OTel sidecar + Service
+│   ├── ai-service/                 # Deployment + OTel sidecar + Service
+│   └── frontend/                   # Deployment + Service + Ingress
+│
+├── paybot-shared/                  # Shared library (DTOs, enums, saga events)
+│   └── src/main/java/com/agile/paybot/shared/
+│       ├── dto/                    # BillDTO, ChatRequest, ChatResponse, etc.
+│       ├── enums/                  # BillStatus, ScheduledPaymentStatus
+│       └── event/                  # Saga events (command + result)
+│
+├── paybot-ai-service/              # AI orchestration service (:8080)
 │   ├── Dockerfile
 │   └── src/main/java/com/agile/paybot/
-│       ├── PayBotApplication.java   # Main entry (@EnableFeignClients)
-│       ├── client/                  # OpenFeign client + Resilience4j fallback
-│       ├── config/                  # Queue, CORS, Redis, WebSocket, Security, Tracing
-│       ├── controller/              # ChatController, GlobalExceptionHandler
-│       ├── function/                # PayBotTools (@Tool methods for Gemini)
-│       ├── listener/                # Chat, Payment result, Schedule result listeners
-│       └── service/                 # ChatService (Gemini + Redis history)
+│       ├── PayBotApplication.java  # Main entry (@EnableFeignClients)
+│       ├── client/                 # OpenFeign client + Resilience4j fallback
+│       ├── config/                 # Queue, CORS, Redis, WebSocket, Security, Tracing
+│       ├── controller/             # ChatController, GlobalExceptionHandler
+│       ├── function/               # PayBotTools (@Tool methods for Gemini)
+│       ├── listener/               # Chat, Payment result, Schedule result listeners
+│       └── service/                # ChatService (Gemini + Redis history)
 │
-├── paybot-financial-service/        # Financial data service (:8081)
+├── paybot-financial-service/       # Financial data service (:8081)
 │   ├── Dockerfile
 │   └── src/main/java/com/agile/paybot/financial/
 │       ├── FinancialServiceApplication.java  # Main entry (@EnableScheduling)
-│       ├── config/                  # Queue, Flyway, Security, Tracing
-│       ├── controller/              # InternalBillController, InternalPaymentController
-│       ├── domain/entity/           # Bill, Payment, ScheduledPayment
-│       ├── listener/                # Payment + Schedule saga participants
-│       ├── repository/              # JPA repositories
-│       ├── scheduler/               # ScheduledPaymentExecutor (5 min job)
-│       └── service/                 # BillService, PaymentService, ScheduledPaymentService
+│       ├── config/                 # Queue, Flyway, Security, Tracing
+│       ├── controller/             # InternalBillController, InternalPaymentController
+│       ├── domain/entity/          # Bill, Payment, ScheduledPayment
+│       ├── listener/               # Payment + Schedule saga participants
+│       ├── repository/             # JPA repositories
+│       ├── scheduler/              # ScheduledPaymentExecutor (5 min job)
+│       └── service/                # BillService, PaymentService, ScheduledPaymentService
 │
-└── paybot-ui/                       # Angular frontend (:4200)
+└── paybot-ui/                      # Angular frontend (:4200)
     ├── Dockerfile
-    ├── nginx.conf                   # Nginx (SPA + API/WebSocket proxy)
+    ├── nginx.conf                  # Nginx (SPA + API/WebSocket proxy)
     └── src/app/
-        ├── core/services/           # chat.service.ts, message-store.service.ts
-        └── features/chat/           # Chat page, message list, chat input components
+        ├── core/services/          # chat.service.ts, message-store.service.ts
+        └── features/chat/          # Chat page, message list, chat input components
 ```
 
 ## Tech Stack
@@ -203,10 +374,12 @@ Paybot/
 | Database | PostgreSQL 16 (Flyway migrations) |
 | Cache/Sessions | Redis 7 (idempotency + chat history) |
 | Real-time | WebSocket with STOMP over SockJS |
-| Distributed Tracing | OpenTelemetry + Zipkin |
+| Distributed Tracing | OpenTelemetry + Zipkin (local) / OTel Collector sidecar → Cloud Trace (GCP) |
 | Security | Spring Security (endpoint authorization) |
 | Frontend | Angular 18 (Standalone Components, Signals) |
 | Containerization | Docker, Docker Compose |
+| Infrastructure | Terraform (GKE, Cloud SQL, Memorystore, IAM) |
+| Orchestration | Kubernetes (GKE) |
 | Web Server | Nginx (production) |
 
 ## API Endpoints
@@ -453,6 +626,19 @@ cd paybot-financial-service && ./mvnw test
 cd paybot-ui && npm test
 ```
 
+### Integration Tests (Testcontainers)
+
+The financial service includes integration tests that run against real PostgreSQL and RabbitMQ containers via Testcontainers. These verify the saga flows and idempotency logic end-to-end.
+
+```bash
+cd paybot-financial-service && ./mvnw verify
+```
+
+**Requires Docker running locally.** Test coverage includes:
+- **PaymentSagaIntegrationTest** -- happy path, bill not found, bill already paid
+- **PaymentIdempotencyIntegrationTest** -- duplicate requestId replay, separate processing
+- **ScheduleSagaIntegrationTest** -- schedule happy path, duplicate requestId idempotency
+
 ### Inspecting the DLQ
 ```bash
 # Via RabbitMQ Management UI
@@ -471,7 +657,17 @@ docker exec -it paybot-rabbitmq rabbitmqctl list_queues name messages
 | `SPRING_DATASOURCE_URL` | financial-service | PostgreSQL JDBC URL |
 | `SPRING_RABBITMQ_HOST` | both | RabbitMQ hostname |
 | `SPRING_DATA_REDIS_HOST` | ai-service | Redis hostname |
-| `MANAGEMENT_ZIPKIN_TRACING_ENDPOINT` | both | Zipkin span collector URL |
+| `MANAGEMENT_ZIPKIN_TRACING_ENDPOINT` | both | Zipkin span collector URL (local/docker only) |
+
+### GCP-Specific Variables (set via K8s ConfigMap/Secrets)
+
+| Variable | Service | Description |
+|----------|---------|-------------|
+| `SPRING_PROFILES_ACTIVE` | both | Set to `gcp` for GKE deployment |
+| `CLOUDSQL_PRIVATE_IP` | financial-service | Cloud SQL private IP (from Terraform) |
+| `MEMORYSTORE_HOST` | ai-service | Memorystore Redis IP (from Terraform) |
+| `DB_PASSWORD` | financial-service | Database password (from K8s Secret) |
+| `RABBITMQ_PASSWORD` | both | RabbitMQ password (from K8s Secret) |
 
 ## Troubleshooting
 
@@ -498,13 +694,16 @@ docker-compose logs paybot-financial-service
 ```
 
 ### No traces appearing in Zipkin
-Both services require the manual `TracingConfig.java` (Spring Boot 4 removed Zipkin auto-config). Verify:
+Both services use a profile-conditional `TracingConfig.java`. Verify:
 1. Zipkin container is healthy: `docker ps --filter name=zipkin`
 2. Send a request, wait 5-10 seconds, then check: `curl http://localhost:9411/api/v2/services`
 3. Both `paybot-ai-service` and `paybot-financial-service` should appear in the response
 
 ### CORS errors
 The AI service is configured to allow requests from `http://localhost:4200`. If using a different port, update `CorsConfig.java`.
+
+### Spring Cloud GCP compatibility
+Spring Cloud GCP 5.x is not compatible with Spring Boot 4.x. The `spring-cloud-gcp-starter-secretmanager` cannot be used. Instead, secrets are injected via K8s Secrets (synced from GCP Secret Manager using External Secrets Operator or similar).
 
 ## License
 

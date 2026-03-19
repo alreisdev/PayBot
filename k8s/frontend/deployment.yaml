@@ -1,0 +1,49 @@
+# paybot-frontend Deployment.
+# Angular app served via nginx on port 80.
+# Replace PROJECT_ID with your actual GCP project ID.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paybot-frontend
+  namespace: paybot
+  labels:
+    app: paybot-frontend
+    project: paybot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: paybot-frontend
+      project: paybot
+  template:
+    metadata:
+      labels:
+        app: paybot-frontend
+        project: paybot
+    spec:
+      containers:
+        - name: paybot-frontend
+          image: gcr.io/paybot-gemini/paybot-frontend:latest
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

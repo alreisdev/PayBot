@@ -1,0 +1,35 @@
+# =============================================================================
+# PayBot Terraform Variables
+# Copy this file to terraform.tfvars and fill in your values:
+#   cp terraform.tfvars.example terraform.tfvars
+# =============================================================================
+
+# REQUIRED: Your GCP project ID
+project_id = "your-gcp-project-id"
+
+# Region and zone (defaults are fine for most cases)
+# region = "us-central1"
+# zone   = "us-central1-a"
+
+# GKE cluster sizing (defaults are fine for dev)
+# gke_num_nodes    = 3
+# gke_machine_type = "e2-medium"
+
+# Cloud SQL tier (db-f1-micro for dev, db-custom-2-4096 for production)
+# db_tier = "db-f1-micro"
+
+# REQUIRED: Database password for the 'paybot' user
+db_password = "CHANGE_ME_strong_password_here"
+
+# Redis memory (1 GB is fine for dev)
+# redis_memory_size_gb = 1
+
+# REQUIRED: Redis password (stored in Secret Manager)
+redis_password = "CHANGE_ME_strong_password_here"
+
+# REQUIRED: RabbitMQ password (used by the K8s StatefulSet)
+rabbitmq_password = "CHANGE_ME_strong_password_here"
+
+# Optional: Path to Gemini service account JSON (for Secret Manager)
+# Leave empty if using Workload Identity (recommended for GKE)
+# gemini_credentials_file = "../credentials/paybot-credentials.json"

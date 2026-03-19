@@ -1,0 +1,13 @@
+# Shared configuration for PayBot services.
+# Replace placeholder values with actual Terraform outputs after provisioning.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paybot-config
+  namespace: paybot
+  labels:
+    project: paybot
+data:
+  SPRING_PROFILES_ACTIVE: "gcp"
+  CLOUDSQL_PRIVATE_IP: "10.247.1.3"
+  MEMORYSTORE_HOST: "10.247.0.3"

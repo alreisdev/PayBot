@@ -36,6 +36,8 @@
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
+			<!-- spring-cloud-gcp-dependencies removed: incompatible with Spring Boot 4.x -->
+			<!-- Secrets are injected via K8s Secrets (synced from GCP Secret Manager) -->
 		</dependencies>
 	</dependencyManagement>
 
@@ -113,6 +115,12 @@
 		<dependency>
 			<groupId>io.opentelemetry</groupId>
 			<artifactId>opentelemetry-exporter-zipkin</artifactId>
+		</dependency>
+
+		<!-- OTLP exporter (sends traces to OTel Collector sidecar) -->
+		<dependency>
+			<groupId>io.opentelemetry</groupId>
+			<artifactId>opentelemetry-exporter-otlp</artifactId>
 		</dependency>
 
 		<!-- Lombok -->

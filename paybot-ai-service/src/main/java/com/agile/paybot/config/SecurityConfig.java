@@ -33,7 +33,7 @@ public class SecurityConfig {
                         // WebSocket endpoint
                         .requestMatchers("/ws-paybot/**").permitAll()
                         // Actuator health only
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         // Block all other actuator endpoints
                         .requestMatchers("/actuator/**").denyAll()
                         // Deny everything else by default
