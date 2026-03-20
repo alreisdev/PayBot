@@ -368,7 +368,7 @@ Paybot/
 | Component | Technology |
 |-----------|------------|
 | AI Service | Spring Boot 4.0.3, Java 17, Spring AI 2.0.0-M2 |
-| LLM | Google Gemini 2.0 Flash via Spring AI |
+| LLM | Google Gemini 2.5 Flash via Spring AI |
 | Inter-service REST | Spring Cloud OpenFeign + Resilience4j circuit breaker |
 | Async Messaging | RabbitMQ 3 (Choreography Saga pattern) |
 | Database | PostgreSQL 16 (Flyway migrations) |
@@ -431,7 +431,7 @@ Connect to `/ws-paybot` and subscribe to `/topic/messages/{sessionId}`:
     "content": "Here are your unpaid bills..."
   },
   "metadata": {
-    "model": "gemini-2.0-flash",
+    "model": "gemini-2.5-flash",
     "sessionId": "session-uuid",
     "requestId": "unique-uuid",
     "processingTimeMs": 1250

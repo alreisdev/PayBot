@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,9 @@ public class PaymentResultListener {
     private final SimpMessagingTemplate messagingTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
+
+    @Value("${spring.ai.google.genai.chat.options.model}")
+    private String modelVersion;
 
     @RabbitListener(queues = ChatQueueConfig.PAYMENT_RESULT_QUEUE)
     public void handlePaymentResult(PaymentResultEvent event, Channel channel,
@@ -47,7 +51,7 @@ public class PaymentResultListener {
 
             ChatResponse response = new ChatResponse(
                     new MessageDTO("assistant", message),
-                    new ChatResponse.ChatMetadata("gemini-2.0-flash", sessionId, requestId, null, false)
+                    new ChatResponse.ChatMetadata(modelVersion, sessionId, requestId, null, false)
             );
 
             // Send via WebSocket to the user's session

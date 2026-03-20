@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,9 @@ public class SchedulePaymentResultListener {
     private final SimpMessagingTemplate messagingTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
+
+    @Value("${spring.ai.google.genai.chat.options.model}")
+    private String modelVersion;
 
     @RabbitListener(queues = ChatQueueConfig.SCHEDULE_RESULT_QUEUE)
     public void handleScheduleResult(SchedulePaymentResultEvent event, Channel channel,
@@ -45,7 +49,7 @@ public class SchedulePaymentResultListener {
 
             ChatResponse response = new ChatResponse(
                     new MessageDTO("assistant", message),
-                    new ChatResponse.ChatMetadata("gemini-2.0-flash", sessionId, requestId, null, false)
+                    new ChatResponse.ChatMetadata(modelVersion, sessionId, requestId, null, false)
             );
 
             messagingTemplate.convertAndSend("/topic/messages/" + sessionId, response);

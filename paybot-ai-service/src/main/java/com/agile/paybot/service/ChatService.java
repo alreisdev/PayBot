@@ -4,6 +4,7 @@ import com.agile.paybot.function.PayBotTools;
 import com.agile.paybot.shared.dto.ChatRequest;
 import com.agile.paybot.shared.dto.ChatResponse;
 import com.agile.paybot.shared.dto.MessageDTO;
+import org.springframework.beans.factory.annotation.Value;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,6 +34,9 @@ public class ChatService {
     private final PayBotTools payBotTools;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
+
+    @Value("${spring.ai.google.genai.chat.options.model}")
+    private String modelVersion;
 
     private static final String SYSTEM_PROMPT = """
             You are PayBot, a friendly and helpful assistant for managing and paying bills.
@@ -158,7 +162,7 @@ public class ChatService {
         return new ChatResponse(
                 assistantMessage,
                 new ChatResponse.ChatMetadata(
-                        "gemini-2.0-flash",
+                        modelVersion,
                         sessionId, request.requestId(), null,
                         paymentWasTriggered
                 )

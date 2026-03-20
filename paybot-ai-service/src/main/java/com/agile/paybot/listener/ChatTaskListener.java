@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.support.AmqpHeaders;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.handler.annotation.Header;
@@ -38,6 +39,9 @@ public class ChatTaskListener {
     private final SimpMessagingTemplate messagingTemplate;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
+
+    @Value("${spring.ai.google.genai.chat.options.model}")
+    private String modelVersion;
 
     @RabbitListener(queues = ChatQueueConfig.CHAT_QUEUE)
     public void processChatRequest(ChatRequest request, Channel channel,
@@ -172,7 +176,7 @@ public class ChatTaskListener {
             ChatResponse errorResponse = new ChatResponse(
                     new MessageDTO("assistant",
                             "I'm having trouble processing this specific request. Please try rephrasing."),
-                    new ChatResponse.ChatMetadata("gemini-2.0-flash", request.sessionId(), requestId, null, false)
+                    new ChatResponse.ChatMetadata(modelVersion, request.sessionId(), requestId, null, false)
             );
             messagingTemplate.convertAndSend("/topic/messages/" + request.sessionId(), errorResponse);
 
