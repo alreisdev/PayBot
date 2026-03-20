@@ -122,7 +122,7 @@ class PaymentSagaIntegrationTest extends IntegrationTestBase {
         assertThat(secondResult).isNotNull();
         assertThat(secondResult.requestId()).isEqualTo(secondRequestId);
         assertThat(secondResult.success()).isFalse();
-        assertThat(secondResult.message()).containsIgnoringCase("already paid");
+        assertThat(secondResult.message()).containsIgnoringCase("already been paid");
     }
 
     /**
