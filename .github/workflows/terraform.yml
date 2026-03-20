@@ -1,0 +1,132 @@
+name: Terraform
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+env:
+  TF_VAR_project_id: ${{ secrets.GCP_PROJECT_ID }}
+  TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+  TF_VAR_redis_password: ${{ secrets.REDIS_PASSWORD }}
+  TF_VAR_rabbitmq_password: ${{ secrets.RABBITMQ_PASSWORD }}
+
+jobs:
+  # ── Terraform Plan ────────────────────────────────────────────────────
+  terraform-plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform validate
+
+      - name: Terraform Plan
+        id: plan
+        run: terraform -chdir=terraform plan -out=tfplan -no-color
+        continue-on-error: true
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+          retention-days: 1
+
+      - name: Post plan to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        env:
+          PLAN_EXIT_CODE: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const { execSync } = require('child_process');
+            let planOutput;
+            try {
+              planOutput = execSync('terraform -chdir=terraform show -no-color tfplan', {
+                encoding: 'utf-8',
+                maxBuffer: 1024 * 1024
+              });
+            } catch (e) {
+              planOutput = 'Failed to read plan output';
+            }
+
+            // Truncate if too long for GitHub comment (max 65536 chars)
+            const maxLen = 60000;
+            if (planOutput.length > maxLen) {
+              planOutput = planOutput.substring(0, maxLen) + '\n\n... (truncated)';
+            }
+
+            const icon = process.env.PLAN_EXIT_CODE === 'success' ? '✅' : '⚠️';
+            const body = `### ${icon} Terraform Plan
+
+            <details>
+            <summary>Click to expand plan output</summary>
+
+            \`\`\`
+            ${planOutput}
+            \`\`\`
+
+            </details>`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Fail on plan error
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ── Terraform Apply ───────────────────────────────────────────────────
+  terraform-apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: terraform -chdir=terraform init
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/
+
+      - name: Terraform Apply
+        run: terraform -chdir=terraform apply -auto-approve tfplan

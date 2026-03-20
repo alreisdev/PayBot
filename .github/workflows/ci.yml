@@ -1,0 +1,211 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'terraform/**'
+      - '**.md'
+      - '.gitignore'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - 'terraform/**'
+      - '**.md'
+      - '.gitignore'
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCR_REGISTRY: gcr.io/${{ secrets.GCP_PROJECT_ID }}
+  GKE_CLUSTER: paybot-cluster
+  GKE_ZONE: us-central1-a
+
+jobs:
+  # ── Build shared library ──────────────────────────────────────────────
+  build-shared:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - name: Build and install shared library
+        run: cd paybot-shared && mvn clean install -B -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paybot-shared-m2
+          path: ~/.m2/repository/com/agile/paybot/paybot-shared/
+          retention-days: 1
+
+  # ── Build & test AI service ───────────────────────────────────────────
+  build-test-ai-service:
+    needs: build-shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: paybot-shared-m2
+          path: ~/.m2/repository/com/agile/paybot/paybot-shared/
+
+      - name: Build and test
+        run: cd paybot-ai-service && mvn clean verify -B
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-service-test-results
+          path: paybot-ai-service/target/surefire-reports/
+
+  # ── Build & test Financial service ────────────────────────────────────
+  build-test-financial:
+    needs: build-shared
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: maven
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: paybot-shared-m2
+          path: ~/.m2/repository/com/agile/paybot/paybot-shared/
+
+      - name: Build and test (with Testcontainers)
+        run: cd paybot-financial-service && mvn clean verify -B
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: financial-test-results
+          path: paybot-financial-service/target/surefire-reports/
+
+  # ── Build & test Frontend ─────────────────────────────────────────────
+  build-test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: paybot-ui/package-lock.json
+
+      - name: Install dependencies
+        run: cd paybot-ui && npm ci
+
+      - name: Run tests
+        run: cd paybot-ui && npx ng test --watch=false --browsers=ChromeHeadless
+
+      - name: Build production bundle
+        run: cd paybot-ui && npx ng build --configuration=production
+
+  # ── Docker build & push to GCR ───────────────────────────────────────
+  docker-build-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build-test-ai-service, build-test-financial, build-test-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker --quiet
+
+      - name: Build and push AI service
+        run: |
+          docker build -f paybot-ai-service/Dockerfile \
+            -t ${{ env.GCR_REGISTRY }}/paybot-ai-service:${{ github.sha }} \
+            -t ${{ env.GCR_REGISTRY }}/paybot-ai-service:latest .
+          docker push ${{ env.GCR_REGISTRY }}/paybot-ai-service --all-tags
+
+      - name: Build and push Financial service
+        run: |
+          docker build -f paybot-financial-service/Dockerfile \
+            -t ${{ env.GCR_REGISTRY }}/paybot-financial-service:${{ github.sha }} \
+            -t ${{ env.GCR_REGISTRY }}/paybot-financial-service:latest .
+          docker push ${{ env.GCR_REGISTRY }}/paybot-financial-service --all-tags
+
+      - name: Build and push Frontend
+        run: |
+          docker build -f paybot-ui/Dockerfile \
+            -t ${{ env.GCR_REGISTRY }}/paybot-frontend:${{ github.sha }} \
+            -t ${{ env.GCR_REGISTRY }}/paybot-frontend:latest .
+          docker push ${{ env.GCR_REGISTRY }}/paybot-frontend --all-tags
+
+  # ── Deploy to GKE ────────────────────────────────────────────────────
+  deploy-gke:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: docker-build-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/db-secret.yaml
+          kubectl apply -f k8s/service-account.yaml
+          kubectl apply -f k8s/otel-collector-config.yaml
+          kubectl apply -f k8s/rabbitmq/
+          kubectl apply -f k8s/financial-service/
+          kubectl apply -f k8s/ai-service/
+          kubectl apply -f k8s/frontend/
+
+      - name: Update container images to SHA tag
+        run: |
+          kubectl set image deployment/paybot-ai-service \
+            paybot-ai-service=${{ env.GCR_REGISTRY }}/paybot-ai-service:${{ github.sha }} \
+            -n paybot
+          kubectl set image deployment/paybot-financial-service \
+            paybot-financial-service=${{ env.GCR_REGISTRY }}/paybot-financial-service:${{ github.sha }} \
+            -n paybot
+          kubectl set image deployment/paybot-frontend \
+            paybot-frontend=${{ env.GCR_REGISTRY }}/paybot-frontend:${{ github.sha }} \
+            -n paybot
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/paybot-financial-service -n paybot --timeout=300s
+          kubectl rollout status deployment/paybot-ai-service -n paybot --timeout=300s
+          kubectl rollout status deployment/paybot-frontend -n paybot --timeout=300s

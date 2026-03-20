@@ -133,8 +133,8 @@ services:
 
   frontend:
     build:
-      context: ./paybot-ui
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: paybot-ui/Dockerfile
     container_name: paybot-frontend
     ports:
       - "4200:80"

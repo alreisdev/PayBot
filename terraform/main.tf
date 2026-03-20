@@ -20,13 +20,10 @@ terraform {
     }
   }
 
-  # Local backend for development. For production, use GCS:
-  # backend "gcs" {
-  #   bucket = "paybot-terraform-state"
-  #   prefix = "terraform/state"
-  # }
-  backend "local" {
-    path = "terraform.tfstate"
+  # Remote backend for CI/CD. Requires: gsutil mb -p paybot-gemini -l us-central1 gs://paybot-terraform-state
+  backend "gcs" {
+    bucket = "paybot-terraform-state"
+    prefix = "terraform/state"
   }
 }
 
