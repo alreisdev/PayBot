@@ -47,7 +47,7 @@ public class PaymentResultListener {
 
             ChatResponse response = new ChatResponse(
                     new MessageDTO("assistant", message),
-                    new ChatResponse.ChatMetadata("gemini-2.0-flash", sessionId, requestId, null)
+                    new ChatResponse.ChatMetadata("gemini-2.0-flash", sessionId, requestId, null, false)
             );
 
             // Send via WebSocket to the user's session

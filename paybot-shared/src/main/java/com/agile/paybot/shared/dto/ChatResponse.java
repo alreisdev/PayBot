@@ -8,6 +8,7 @@ public record ChatResponse(
             String model,
             String sessionId,
             String requestId,
-            Long processingTimeMs
+            Long processingTimeMs,
+            Boolean paymentTriggered
     ) {}
 }

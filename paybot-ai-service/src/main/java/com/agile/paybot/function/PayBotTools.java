@@ -33,6 +33,7 @@ public class PayBotTools {
      */
     private static final ThreadLocal<String> currentRequestId = new ThreadLocal<>();
     private static final ThreadLocal<String> currentSessionId = new ThreadLocal<>();
+    private static final ThreadLocal<Boolean> sagaTriggered = ThreadLocal.withInitial(() -> false);
 
     public static void setCurrentRequestId(String requestId) {
         currentRequestId.set(requestId);
@@ -42,9 +43,14 @@ public class PayBotTools {
         currentSessionId.set(sessionId);
     }
 
+    public static boolean wasSagaTriggered() {
+        return Boolean.TRUE.equals(sagaTriggered.get());
+    }
+
     public static void clearContext() {
         currentRequestId.remove();
         currentSessionId.remove();
+        sagaTriggered.remove();
     }
 
     // ── Synchronous tools (REST calls to financial service) ──
@@ -172,6 +178,8 @@ public class PayBotTools {
                     command
             );
 
+            sagaTriggered.set(true);
+
             log.info("Published PaymentCommandEvent: requestId={}, billId={}, amount={}",
                     currentRequestId.get(), billId, amount);
 
@@ -201,6 +209,8 @@ public class PayBotTools {
                     ChatQueueConfig.SCHEDULE_COMMAND_KEY,
                     command
             );
+
+            sagaTriggered.set(true);
 
             log.info("Published SchedulePaymentCommandEvent: requestId={}, billId={}, scheduledDate={}",
                     currentRequestId.get(), billId, scheduledDate);

@@ -45,7 +45,7 @@ public class SchedulePaymentResultListener {
 
             ChatResponse response = new ChatResponse(
                     new MessageDTO("assistant", message),
-                    new ChatResponse.ChatMetadata("gemini-2.0-flash", sessionId, requestId, null)
+                    new ChatResponse.ChatMetadata("gemini-2.0-flash", sessionId, requestId, null, false)
             );
 
             messagingTemplate.convertAndSend("/topic/messages/" + sessionId, response);

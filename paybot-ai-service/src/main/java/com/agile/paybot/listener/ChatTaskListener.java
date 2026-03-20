@@ -90,8 +90,13 @@ public class ChatTaskListener {
             // Cache the response for replay
             cacheResponse(requestId, response);
 
-            // Send response via WebSocket
-            messagingTemplate.convertAndSend("/topic/messages/" + request.sessionId(), response);
+            // Skip sending the LLM response if a payment was triggered —
+            // the saga result listener will send the detailed confirmation via WebSocket
+            if (Boolean.TRUE.equals(response.metadata().paymentTriggered())) {
+                log.info("Payment triggered, skipping LLM response WebSocket send: requestId={}", requestId);
+            } else {
+                messagingTemplate.convertAndSend("/topic/messages/" + request.sessionId(), response);
+            }
 
             // Acknowledge the message
             channel.basicAck(deliveryTag, false);
@@ -167,7 +172,7 @@ public class ChatTaskListener {
             ChatResponse errorResponse = new ChatResponse(
                     new MessageDTO("assistant",
                             "I'm having trouble processing this specific request. Please try rephrasing."),
-                    new ChatResponse.ChatMetadata("gemini-2.0-flash", request.sessionId(), requestId, null)
+                    new ChatResponse.ChatMetadata("gemini-2.0-flash", request.sessionId(), requestId, null, false)
             );
             messagingTemplate.convertAndSend("/topic/messages/" + request.sessionId(), errorResponse);
 
