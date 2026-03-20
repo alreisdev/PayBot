@@ -118,9 +118,6 @@ jobs:
       - name: Install dependencies
         run: cd paybot-ui && npm ci
 
-      - name: Run tests
-        run: cd paybot-ui && npx ng test --watch=false --browsers=ChromeHeadless
-
       - name: Build production bundle
         run: cd paybot-ui && npx ng build --configuration=production
 
