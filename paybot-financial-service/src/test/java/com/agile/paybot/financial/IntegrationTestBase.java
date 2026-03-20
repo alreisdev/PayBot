@@ -30,7 +30,7 @@ public abstract class IntegrationTestBase {
         registry.add("spring.rabbitmq.port", rabbitmq::getAmqpPort);
         registry.add("spring.rabbitmq.username", () -> "guest");
         registry.add("spring.rabbitmq.password", () -> "guest");
-        registry.add("management.zipkin.tracing.endpoint", () -> "");
+        registry.add("management.zipkin.tracing.endpoint", () -> "http://localhost:9411/api/v2/spans");
         registry.add("spring.security.user.password", () -> "test");
     }
 }
