@@ -5,21 +5,23 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.containers.RabbitMQContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 
 @SpringBootTest
-@Testcontainers
 public abstract class IntegrationTestBase {
 
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
-            .withDatabaseName("paybotdb")
-            .withUsername("paybot")
-            .withPassword("test");
+    static final PostgreSQLContainer<?> postgres;
+    static final RabbitMQContainer rabbitmq;
 
-    @Container
-    static RabbitMQContainer rabbitmq = new RabbitMQContainer("rabbitmq:3-management-alpine");
+    static {
+        postgres = new PostgreSQLContainer<>("postgres:16-alpine")
+                .withDatabaseName("paybotdb")
+                .withUsername("paybot")
+                .withPassword("test");
+        postgres.start();
+
+        rabbitmq = new RabbitMQContainer("rabbitmq:3-management-alpine");
+        rabbitmq.start();
+    }
 
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
