@@ -26,7 +26,7 @@ public class SecurityConfig {
                         // Internal API endpoints (called by AI service via Feign)
                         .requestMatchers("/api/internal/**").permitAll()
                         // Actuator health for Docker healthcheck
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         // Swagger UI (controlled by application properties, disabled in docker profile)
                         .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                         // Block all other actuator endpoints

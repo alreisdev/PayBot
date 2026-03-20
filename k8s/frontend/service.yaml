@@ -1,0 +1,19 @@
+# ClusterIP service for the Angular frontend.
+# Exposed externally via the Ingress resource.
+apiVersion: v1
+kind: Service
+metadata:
+  name: paybot-frontend
+  namespace: paybot
+  labels:
+    app: paybot-frontend
+    project: paybot
+spec:
+  type: ClusterIP
+  selector:
+    app: paybot-frontend
+    project: paybot
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

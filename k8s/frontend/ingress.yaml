@@ -1,0 +1,28 @@
+# GKE Ingress for external traffic.
+# This creates a Google Cloud HTTP(S) Load Balancer.
+#
+# For production, add TLS:
+#   1. Use cert-manager with a ClusterIssuer for Let's Encrypt, or
+#   2. Use a Google-managed certificate:
+#        networking.gke.io/managed-certificates: "paybot-cert"
+#   3. Add a ManagedCertificate resource referencing your domain.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: paybot-ingress
+  namespace: paybot
+  labels:
+    project: paybot
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paybot-frontend
+                port:
+                  number: 80

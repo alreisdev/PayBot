@@ -60,3 +60,10 @@ credentials/
 !package-lock.json
 !angular.json
 !tsconfig*.json
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+terraform/.terraform.lock.hcl
