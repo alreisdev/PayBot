@@ -37,7 +37,7 @@ spec:
                 secretKeyRef:
                   name: db-secret
                   key: DB_PASSWORD
-            - name: SPRING_RABBITMQ_PASSWORD
+            - name: RABBITMQ_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: rabbitmq-secret

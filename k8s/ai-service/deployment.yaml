@@ -33,7 +33,7 @@ spec:
             - configMapRef:
                 name: paybot-config
           env:
-            - name: SPRING_RABBITMQ_PASSWORD
+            - name: RABBITMQ_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: rabbitmq-secret
