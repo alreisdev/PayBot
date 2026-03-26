@@ -206,3 +206,24 @@ jobs:
           kubectl rollout status deployment/paybot-financial-service -n paybot --timeout=300s
           kubectl rollout status deployment/paybot-ai-service -n paybot --timeout=300s
           kubectl rollout status deployment/paybot-frontend -n paybot --timeout=300s
+
+      - name: Debug failed rollout
+        if: failure()
+        run: |
+          echo "=== Pod status ==="
+          kubectl get pods -n paybot -o wide
+          echo ""
+          echo "=== Financial service pod events ==="
+          kubectl describe pod -l app=paybot-financial-service -n paybot | tail -40
+          echo ""
+          echo "=== Financial service logs ==="
+          kubectl logs -l app=paybot-financial-service -n paybot --tail=80 --all-containers=true
+          echo ""
+          echo "=== AI service pod events ==="
+          kubectl describe pod -l app=paybot-ai-service -n paybot | tail -40
+          echo ""
+          echo "=== AI service logs ==="
+          kubectl logs -l app=paybot-ai-service -n paybot --tail=80 --all-containers=true
+          echo ""
+          echo "=== Frontend pod events ==="
+          kubectl describe pod -l app=paybot-frontend -n paybot | tail -40
