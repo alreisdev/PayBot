@@ -11,6 +11,8 @@ metadata:
     project: paybot
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: paybot-frontend
