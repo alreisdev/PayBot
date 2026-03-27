@@ -213,17 +213,26 @@ jobs:
           echo "=== Pod status ==="
           kubectl get pods -n paybot -o wide
           echo ""
-          echo "=== Financial service pod events ==="
-          kubectl describe pod -l app=paybot-financial-service -n paybot | tail -40
+          echo "=== Namespace events (last 30) ==="
+          kubectl get events -n paybot --sort-by='.lastTimestamp' | tail -30
           echo ""
-          echo "=== Financial service logs ==="
-          kubectl logs -l app=paybot-financial-service -n paybot --tail=80 --all-containers=true
+          echo "=== Node resources ==="
+          kubectl top nodes 2>/dev/null || kubectl describe nodes | grep -A5 "Allocated resources"
           echo ""
-          echo "=== AI service pod events ==="
-          kubectl describe pod -l app=paybot-ai-service -n paybot | tail -40
+          echo "=== Deployment status ==="
+          kubectl get deployments -n paybot -o wide
           echo ""
-          echo "=== AI service logs ==="
-          kubectl logs -l app=paybot-ai-service -n paybot --tail=80 --all-containers=true
+          echo "=== ReplicaSets ==="
+          kubectl get replicasets -n paybot -o wide
           echo ""
-          echo "=== Frontend pod events ==="
-          kubectl describe pod -l app=paybot-frontend -n paybot | tail -40
+          echo "=== Pending/non-Running pod details ==="
+          for pod in $(kubectl get pods -n paybot --field-selector=status.phase!=Running -o name 2>/dev/null); do
+            echo "--- $pod ---"
+            kubectl describe "$pod" -n paybot | grep -A20 "Events:"
+          done
+          echo ""
+          echo "=== Running pod logs (last 30 lines) ==="
+          for dep in paybot-financial-service paybot-ai-service paybot-frontend; do
+            echo "--- $dep ---"
+            kubectl logs -l app=$dep -n paybot --tail=30 -c $dep 2>/dev/null || echo "(no logs)"
+          done
